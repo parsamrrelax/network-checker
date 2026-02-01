@@ -1,5 +1,6 @@
-
 # Network Checker - Set of network tools curated for Iran's Internet situation.
+
+[Readme in Farsi](https://github.com/mirarr-app/network-checker/blob/main/README_FA.md)
 
 Available for Android, Windows and Linux.
 
