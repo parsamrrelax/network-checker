@@ -983,6 +983,55 @@ class _ScanningStep extends StatelessWidget {
   Widget _buildEmptyState(BuildContext context, CdnConfigScanController controller) {
     final colorScheme = Theme.of(context).colorScheme;
 
+    // Show error if there's a scan error
+    if (controller.scanError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.error_outline, size: 64, color: colorScheme.error),
+              const SizedBox(height: 24),
+              Text(
+                'Scan Failed',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.error,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: colorScheme.errorContainer.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: colorScheme.error.withValues(alpha: 0.5)),
+                ),
+                child: Text(
+                  controller.scanError!,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: colorScheme.onErrorContainer,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                onPressed: () {
+                  controller.clearScanError();
+                },
+                icon: const Icon(Icons.refresh),
+                label: const Text('Try Again'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (controller.isPreparingScan || controller.isScanning) {
       return Center(
         child: Column(

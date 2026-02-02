@@ -4,6 +4,9 @@ import 'dart:io';
 import 'xray_binary_service.dart';
 import 'xray_process_manager.dart';
 
+// Re-export exceptions for convenience
+export 'xray_process_manager.dart' show XrayStartupException, PortInUseException;
+
 /// Result of a CDN IP scan
 class CdnScanResult {
   final String ip;
@@ -85,10 +88,11 @@ class CdnScanConfig {
 class CdnConfigScanner {
   final XrayBinaryService _binaryService;
   final CdnScanConfig config;
-  
+
   XrayProcessManager? _processManager;
   bool _isScanning = false;
   bool _shouldStop = false;
+  final List<Process> _activeProcesses = [];
 
   CdnConfigScanner({
     XrayBinaryService? binaryService,
@@ -160,7 +164,8 @@ class CdnConfigScanner {
 
     for (var i = start; i < end; i++) {
       final addr = networkAddr + i;
-      final ip = '${(addr >> 24) & 0xFF}.${(addr >> 16) & 0xFF}.${(addr >> 8) & 0xFF}.${addr & 0xFF}';
+      final ip =
+          '${(addr >> 24) & 0xFF}.${(addr >> 16) & 0xFF}.${(addr >> 8) & 0xFF}.${addr & 0xFF}';
       ips.add(ip);
     }
 
@@ -183,31 +188,49 @@ class CdnConfigScanner {
   /// Test connection through SOCKS5 proxy using curl command
   /// This feature is only available on desktop (Linux/Windows)
   Future<CdnScanResult> _testWithSocks5Proxy(String ip, int proxyPort) async {
+    Process? curlProcess;
     try {
       // Use curl with SOCKS5 proxy - socks5h means DNS resolution on proxy side
-      final result = await Process.run(
+      curlProcess = await Process.start(
         'curl',
         [
-          '-s',                                    // Silent mode
-          '-o', Platform.isWindows ? 'NUL' : '/dev/null',  // Discard output
-          '-w', '%{http_code},%{time_total}',     // Output status code and time
-          '--proxy', 'socks5h://127.0.0.1:$proxyPort',
-          '--connect-timeout', config.timeout.inSeconds.toString(),
-          '-k',                                    // Allow insecure SSL
+          '-s', // Silent mode
+          '-o',
+          Platform.isWindows ? 'NUL' : '/dev/null', // Discard output
+          '-w',
+          '%{http_code},%{time_total}', // Output status code and time
+          '--proxy',
+          'socks5h://127.0.0.1:$proxyPort',
+          '--connect-timeout',
+          config.timeout.inSeconds.toString(),
+          '-k', // Allow insecure SSL
           config.testUrl,
         ],
-      ).timeout(config.timeout + const Duration(seconds: 2));
-      
-      if (result.exitCode == 0) {
+      );
+
+      // Track active process for cleanup
+      _activeProcesses.add(curlProcess);
+
+      final result = await curlProcess.exitCode
+          .timeout(config.timeout + const Duration(seconds: 2));
+
+      // Read output
+      final stdout = await curlProcess.stdout.transform(const SystemEncoding().decoder).join();
+      final stderr = await curlProcess.stderr.transform(const SystemEncoding().decoder).join();
+
+      // Remove from active processes
+      _activeProcesses.remove(curlProcess);
+
+      if (result == 0) {
         // Parse output: "204,0.123456"
-        final output = result.stdout.toString().trim();
+        final output = stdout.trim();
         final parts = output.split(',');
-        
+
         if (parts.length >= 2) {
           final statusCode = int.tryParse(parts[0]) ?? 0;
           final timeSeconds = double.tryParse(parts[1]) ?? 0;
           final timeMs = timeSeconds * 1000;
-          
+
           if (statusCode == 204 || (statusCode >= 200 && statusCode < 300)) {
             return CdnScanResult(
               ip: ip,
@@ -223,21 +246,24 @@ class CdnConfigScanner {
           }
         }
       }
-      
+
       // curl failed
-      final stderr = result.stderr.toString().trim();
       return CdnScanResult(
         ip: ip,
         success: false,
-        errorMessage: stderr.isNotEmpty ? stderr : 'curl exit code ${result.exitCode}',
+        errorMessage: stderr.isNotEmpty ? stderr.trim() : 'curl exit code $result',
       );
     } on TimeoutException {
+      // Kill the process if it's still running
+      curlProcess?.kill();
+      _activeProcesses.remove(curlProcess);
       return CdnScanResult(
         ip: ip,
         success: false,
         errorMessage: 'Connection timed out',
       );
     } catch (e) {
+      _activeProcesses.remove(curlProcess);
       return CdnScanResult(
         ip: ip,
         success: false,
@@ -268,63 +294,75 @@ class CdnConfigScanner {
 
     _isScanning = true;
     _shouldStop = false;
-    
+
     int completed = 0;
     int successful = 0;
     final total = ips.length;
     final results = <CdnScanResult>[];
-    
+
     try {
       // Initialize process manager
       _processManager = XrayProcessManager(
         binaryService: _binaryService,
         basePort: config.basePort,
       );
-      
-      // Start xray instances
+
+      // Start xray instances - this will throw if ports are in use or xray fails
       await _processManager!.startInstances(baseConfig, config.concurrentInstances);
-      
+
       // Create a queue of IPs to test
       final ipQueue = List<String>.from(ips);
-      
+
       // Process IPs in batches using instances
       final batchSize = config.concurrentInstances;
-      
+
       for (var i = 0; i < ipQueue.length; i += batchSize) {
         if (_shouldStop || controller.isClosed) break;
-        
+
         final batchEnd = (i + batchSize).clamp(0, ipQueue.length);
         final batch = ipQueue.sublist(i, batchEnd);
-        
+
         // Process batch in parallel
         final batchFutures = <Future<CdnScanResult>>[];
-        
+
         for (var j = 0; j < batch.length; j++) {
           if (_shouldStop || controller.isClosed) break;
-          
+
           final ip = batch[j];
           final instanceIndex = j % _processManager!.instanceCount;
           final instance = _processManager!.instances[instanceIndex];
-          
+
           batchFutures.add(_testIpWithInstance(instance, ip, baseConfig));
         }
-        
-        // Wait for batch to complete
-        final batchResults = await Future.wait(batchFutures);
-        
+
+        // Wait for batch to complete with a timeout to prevent hanging
+        List<CdnScanResult> batchResults;
+        try {
+          batchResults = await Future.wait(batchFutures)
+              .timeout(config.timeout * 3); // Give enough time for retries
+        } on TimeoutException {
+          // If batch times out, create failure results for remaining IPs
+          batchResults = batch
+              .map((ip) => CdnScanResult(
+                    ip: ip,
+                    success: false,
+                    errorMessage: 'Batch timeout',
+                  ))
+              .toList();
+        }
+
         for (final result in batchResults) {
           if (_shouldStop || controller.isClosed) break;
-          
+
           completed++;
           if (result.success) {
             successful++;
             results.add(result);
             // Keep results sorted by latency
-            results.sort((a, b) => 
-              (a.latencyMs ?? double.infinity).compareTo(b.latencyMs ?? double.infinity)
-            );
+            results.sort((a, b) =>
+                (a.latencyMs ?? double.infinity).compareTo(b.latencyMs ?? double.infinity));
           }
-          
+
           controller.add(CdnScanProgress(
             result: result,
             completed: completed,
@@ -334,14 +372,20 @@ class CdnConfigScanner {
           ));
         }
       }
-      
+    } on PortInUseException {
+      // Re-throw port in use exception as-is so the UI can show a helpful message
+      rethrow;
+    } on XrayStartupException {
+      // Re-throw xray startup exceptions so the UI can handle them
+      rethrow;
     } catch (e) {
       controller.addError(e);
     } finally {
+      await _cleanup();
       _isScanning = false;
-      await _processManager?.stopAll();
-      _processManager = null;
-      await controller.close();
+      if (!controller.isClosed) {
+        await controller.close();
+      }
     }
   }
 
@@ -353,9 +397,15 @@ class CdnConfigScanner {
     try {
       // Update the instance to use the new IP
       await _processManager!.updateInstanceAddress(instance, ip, baseConfig);
-      
+
       // Test through the proxy
       return await _testWithSocks5Proxy(ip, instance.port);
+    } on XrayStartupException catch (e) {
+      return CdnScanResult(
+        ip: ip,
+        success: false,
+        errorMessage: 'Xray error: ${e.message}',
+      );
     } catch (e) {
       return CdnScanResult(
         ip: ip,
@@ -365,15 +415,32 @@ class CdnConfigScanner {
     }
   }
 
+  /// Clean up all resources
+  Future<void> _cleanup() async {
+    // Kill any active curl processes
+    for (final process in _activeProcesses) {
+      try {
+        process.kill();
+      } catch (_) {}
+    }
+    _activeProcesses.clear();
+
+    // Stop all xray instances
+    if (_processManager != null) {
+      await _processManager!.stopAll();
+      _processManager = null;
+    }
+  }
+
   /// Stop the current scan
-  void stopScan() {
+  Future<void> stopScan() async {
     _shouldStop = true;
+    await _cleanup();
   }
 
   /// Dispose resources
   Future<void> dispose() async {
     _shouldStop = true;
-    await _processManager?.dispose();
+    await _cleanup();
   }
 }
-
