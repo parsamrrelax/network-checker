@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../core/services/cdn_config_scanner.dart';
 import '../../core/services/xray_binary_service.dart' show XrayBinaryService;
-import '../../core/services/xray_process_manager.dart';
+import '../../core/services/xray_process_manager.dart' show XrayProcessManager, XrayStartupException, PortInUseException;
 
 /// Wizard step enum
 enum CdnScanStep {
@@ -104,6 +104,9 @@ class CdnConfigScanController extends ChangeNotifier {
   
   List<CdnScanResult> _results = [];
   List<CdnScanResult> get results => _results;
+  
+  String? _scanError;
+  String? get scanError => _scanError;
   
   StreamSubscription? _scanSubscription;
   CdnConfigScanner? _scanner;
@@ -244,7 +247,7 @@ class CdnConfigScanController extends ChangeNotifier {
   }
 
   /// Move to the previous step
-  void previousStep() {
+  Future<void> previousStep() async {
     switch (_currentStep) {
       case CdnScanStep.binarySetup:
         break; // Already at first step
@@ -253,16 +256,16 @@ class CdnConfigScanController extends ChangeNotifier {
       case CdnScanStep.ipInput:
         _currentStep = CdnScanStep.configInput;
       case CdnScanStep.scanning:
-        stopScan();
+        await stopScan();
         _currentStep = CdnScanStep.ipInput;
     }
     notifyListeners();
   }
 
   /// Go to a specific step
-  void goToStep(CdnScanStep step) {
+  Future<void> goToStep(CdnScanStep step) async {
     if (_currentStep == CdnScanStep.scanning) {
-      stopScan();
+      await stopScan();
     }
     _currentStep = step;
     notifyListeners();
@@ -352,6 +355,7 @@ class CdnConfigScanController extends ChangeNotifier {
     _scannedCount = 0;
     _successCount = 0;
     _results = [];
+    _scanError = null;
     notifyListeners();
 
     _scanner = CdnConfigScanner(
@@ -359,33 +363,66 @@ class CdnConfigScanController extends ChangeNotifier {
       config: _scanConfig,
     );
 
-    _scanSubscription = _scanner!.scanIps(_parsedIps, _parsedConfig!).listen(
-      (progress) {
-        _isPreparingScan = false;
-        _scannedCount = progress.completed;
-        _successCount = progress.successful;
-        _results = progress.results.toList();
-        notifyListeners();
-      },
-      onDone: () {
-        _isScanning = false;
-        _scanSubscription = null;
-        notifyListeners();
-      },
-      onError: (error) {
-        debugPrint('Scan error: $error');
-        _isScanning = false;
-        _isPreparingScan = false;
-        _scanSubscription = null;
-        notifyListeners();
-      },
-    );
+    try {
+      _scanSubscription = _scanner!.scanIps(_parsedIps, _parsedConfig!).listen(
+        (progress) {
+          _isPreparingScan = false;
+          _scannedCount = progress.completed;
+          _successCount = progress.successful;
+          _results = progress.results.toList();
+          notifyListeners();
+        },
+        onDone: () {
+          _isScanning = false;
+          _isPreparingScan = false;
+          _scanSubscription = null;
+          notifyListeners();
+        },
+        onError: (error) {
+          debugPrint('Scan error: $error');
+          _handleScanError(error);
+        },
+      );
+    } on PortInUseException catch (e) {
+      _handleScanError(e);
+    } on XrayStartupException catch (e) {
+      _handleScanError(e);
+    } catch (e) {
+      _handleScanError(e);
+    }
+  }
+
+  /// Handle scan errors and update state
+  void _handleScanError(dynamic error) {
+    _isScanning = false;
+    _isPreparingScan = false;
+    _scanSubscription?.cancel();
+    _scanSubscription = null;
+    
+    if (error is PortInUseException) {
+      _scanError = 'Port conflict: ${error.message}\n\n'
+          'Please close any applications using these ports or change the base port in scan settings.';
+    } else if (error is XrayStartupException) {
+      _scanError = 'Xray failed to start: ${error.message}\n\n'
+          'Please check that your config is valid and try again.';
+    } else {
+      _scanError = 'Scan failed: $error';
+    }
+    
+    debugPrint('Scan error handled: $_scanError');
+    notifyListeners();
+  }
+
+  /// Clear the current scan error
+  void clearScanError() {
+    _scanError = null;
+    notifyListeners();
   }
 
   /// Stop the current scan
-  void stopScan() {
-    _scanner?.stopScan();
-    _scanSubscription?.cancel();
+  Future<void> stopScan() async {
+    await _scanner?.stopScan();
+    await _scanSubscription?.cancel();
     _scanSubscription = null;
     _isScanning = false;
     _isPreparingScan = false;
@@ -401,8 +438,8 @@ class CdnConfigScanController extends ChangeNotifier {
   }
 
   /// Clear all state
-  void clearAll() {
-    stopScan();
+  Future<void> clearAll() async {
+    await stopScan();
     _configJson = '';
     _parsedConfig = null;
     _configError = null;
@@ -413,6 +450,7 @@ class CdnConfigScanController extends ChangeNotifier {
     _scannedCount = 0;
     _successCount = 0;
     _results = [];
+    _scanError = null;
     _currentStep = CdnScanStep.binarySetup;
     notifyListeners();
   }
@@ -445,8 +483,11 @@ class CdnConfigScanController extends ChangeNotifier {
 
   @override
   void dispose() {
+    // Use synchronous cleanup since dispose can't be async
     _scanSubscription?.cancel();
     _scanner?.dispose();
+    _scanSubscription = null;
+    _scanner = null;
     super.dispose();
   }
 }
