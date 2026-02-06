@@ -92,7 +92,6 @@ class CdnConfigScanner {
   XrayProcessManager? _processManager;
   bool _isScanning = false;
   bool _shouldStop = false;
-  final List<Process> _activeProcesses = [];
 
   CdnConfigScanner({
     XrayBinaryService? binaryService,
@@ -188,10 +187,10 @@ class CdnConfigScanner {
   /// Test connection through SOCKS5 proxy using curl command
   /// This feature is only available on desktop (Linux/Windows)
   Future<CdnScanResult> _testWithSocks5Proxy(String ip, int proxyPort) async {
-    Process? curlProcess;
     try {
-      // Use curl with SOCKS5 proxy - socks5h means DNS resolution on proxy side
-      curlProcess = await Process.start(
+      // Use Process.run() instead of Process.start() to avoid file descriptor leaks
+      // Process.run() automatically handles stdout/stderr cleanup
+      final result = await Process.run(
         'curl',
         [
           '-s', // Silent mode
@@ -203,27 +202,16 @@ class CdnConfigScanner {
           'socks5h://127.0.0.1:$proxyPort',
           '--connect-timeout',
           config.timeout.inSeconds.toString(),
+          '--max-time',
+          (config.timeout.inSeconds + 2).toString(), // Total max time
           '-k', // Allow insecure SSL
           config.testUrl,
         ],
-      );
+      ).timeout(config.timeout + const Duration(seconds: 5));
 
-      // Track active process for cleanup
-      _activeProcesses.add(curlProcess);
-
-      final result = await curlProcess.exitCode
-          .timeout(config.timeout + const Duration(seconds: 2));
-
-      // Read output
-      final stdout = await curlProcess.stdout.transform(const SystemEncoding().decoder).join();
-      final stderr = await curlProcess.stderr.transform(const SystemEncoding().decoder).join();
-
-      // Remove from active processes
-      _activeProcesses.remove(curlProcess);
-
-      if (result == 0) {
+      if (result.exitCode == 0) {
         // Parse output: "204,0.123456"
-        final output = stdout.trim();
+        final output = result.stdout.toString().trim();
         final parts = output.split(',');
 
         if (parts.length >= 2) {
@@ -248,22 +236,19 @@ class CdnConfigScanner {
       }
 
       // curl failed
+      final stderr = result.stderr.toString().trim();
       return CdnScanResult(
         ip: ip,
         success: false,
-        errorMessage: stderr.isNotEmpty ? stderr.trim() : 'curl exit code $result',
+        errorMessage: stderr.isNotEmpty ? stderr : 'curl exit code ${result.exitCode}',
       );
     } on TimeoutException {
-      // Kill the process if it's still running
-      curlProcess?.kill();
-      _activeProcesses.remove(curlProcess);
       return CdnScanResult(
         ip: ip,
         success: false,
         errorMessage: 'Connection timed out',
       );
     } catch (e) {
-      _activeProcesses.remove(curlProcess);
       return CdnScanResult(
         ip: ip,
         success: false,
@@ -282,6 +267,13 @@ class CdnConfigScanner {
     return controller.stream;
   }
 
+  // Track failed instances to avoid using them
+  final Set<int> _failedInstanceIds = {};
+  // Track consecutive failures per instance for recovery
+  final Map<int, int> _instanceFailureCount = {};
+  // Lock for serializing instance restarts
+  bool _restartInProgress = false;
+
   Future<void> _runScan(
     List<String> ips,
     Map<String, dynamic> baseConfig,
@@ -294,6 +286,8 @@ class CdnConfigScanner {
 
     _isScanning = true;
     _shouldStop = false;
+    _failedInstanceIds.clear();
+    _instanceFailureCount.clear();
 
     int completed = 0;
     int successful = 0;
@@ -310,39 +304,75 @@ class CdnConfigScanner {
       // Start xray instances - this will throw if ports are in use or xray fails
       await _processManager!.startInstances(baseConfig, config.concurrentInstances);
 
-      // Create a queue of IPs to test
+      // Process IPs one at a time per instance to avoid overwhelming the system
+      // Use a work-stealing approach where each instance processes IPs sequentially
       final ipQueue = List<String>.from(ips);
+      int ipIndex = 0;
+      
+      // Get available instances (excluding failed ones)
+      List<XrayInstance> getAvailableInstances() {
+        return _processManager!.instances
+            .where((i) => !_failedInstanceIds.contains(i.id))
+            .toList();
+      }
 
-      // Process IPs in batches using instances
-      final batchSize = config.concurrentInstances;
-
-      for (var i = 0; i < ipQueue.length; i += batchSize) {
-        if (_shouldStop || controller.isClosed) break;
-
-        final batchEnd = (i + batchSize).clamp(0, ipQueue.length);
-        final batch = ipQueue.sublist(i, batchEnd);
-
-        // Process batch in parallel
-        final batchFutures = <Future<CdnScanResult>>[];
-
-        for (var j = 0; j < batch.length; j++) {
-          if (_shouldStop || controller.isClosed) break;
-
-          final ip = batch[j];
-          final instanceIndex = j % _processManager!.instanceCount;
-          final instance = _processManager!.instances[instanceIndex];
-
-          batchFutures.add(_testIpWithInstance(instance, ip, baseConfig));
+      while (ipIndex < ipQueue.length && !_shouldStop && !controller.isClosed) {
+        final availableInstances = getAvailableInstances();
+        
+        if (availableInstances.isEmpty) {
+          // All instances failed, try to recover one
+          final recovered = await _tryRecoverInstance(baseConfig);
+          if (!recovered) {
+            // Can't recover, fail remaining IPs
+            while (ipIndex < ipQueue.length) {
+              completed++;
+              controller.add(CdnScanProgress(
+                result: CdnScanResult(
+                  ip: ipQueue[ipIndex],
+                  success: false,
+                  errorMessage: 'All xray instances failed',
+                ),
+                completed: completed,
+                total: total,
+                successful: successful,
+                results: List.unmodifiable(results),
+              ));
+              ipIndex++;
+            }
+            break;
+          }
+          continue;
         }
 
-        // Wait for batch to complete with a timeout to prevent hanging
+        // Calculate batch size based on available instances
+        final batchSize = availableInstances.length.clamp(1, ipQueue.length - ipIndex);
+        
+        // Process batch - one IP per instance
+        final batchFutures = <Future<CdnScanResult>>[];
+        final batchIps = <String>[];
+
+        for (var j = 0; j < batchSize && (ipIndex + j) < ipQueue.length; j++) {
+          if (_shouldStop || controller.isClosed) break;
+
+          final ip = ipQueue[ipIndex + j];
+          batchIps.add(ip);
+          
+          if (j < availableInstances.length) {
+            final instance = availableInstances[j];
+            batchFutures.add(_testIpWithInstanceSafe(instance, ip, baseConfig));
+          }
+        }
+
+        if (batchFutures.isEmpty) continue;
+
+        // Wait for batch to complete with a timeout
         List<CdnScanResult> batchResults;
         try {
           batchResults = await Future.wait(batchFutures)
-              .timeout(config.timeout * 3); // Give enough time for retries
+              .timeout(config.timeout * 2 + const Duration(seconds: 10));
         } on TimeoutException {
-          // If batch times out, create failure results for remaining IPs
-          batchResults = batch
+          // If batch times out, create failure results
+          batchResults = batchIps
               .map((ip) => CdnScanResult(
                     ip: ip,
                     success: false,
@@ -351,6 +381,7 @@ class CdnConfigScanner {
               .toList();
         }
 
+        // Update progress
         for (final result in batchResults) {
           if (_shouldStop || controller.isClosed) break;
 
@@ -371,42 +402,131 @@ class CdnConfigScanner {
             results: List.unmodifiable(results),
           ));
         }
+
+        ipIndex += batchResults.length;
+        
+        // Small delay between batches to let the system breathe
+        if (ipIndex < ipQueue.length) {
+          await Future.delayed(const Duration(milliseconds: 50));
+        }
       }
     } on PortInUseException {
-      // Re-throw port in use exception as-is so the UI can show a helpful message
       rethrow;
     } on XrayStartupException {
-      // Re-throw xray startup exceptions so the UI can handle them
       rethrow;
     } catch (e) {
       controller.addError(e);
     } finally {
       await _cleanup();
       _isScanning = false;
+      _failedInstanceIds.clear();
+      _instanceFailureCount.clear();
       if (!controller.isClosed) {
         await controller.close();
       }
     }
   }
 
-  Future<CdnScanResult> _testIpWithInstance(
+  /// Try to recover a failed instance by waiting and restarting it
+  Future<bool> _tryRecoverInstance(Map<String, dynamic> baseConfig) async {
+    if (_processManager == null || _failedInstanceIds.isEmpty) return false;
+    
+    // Find the instance that failed least recently (lowest failure count)
+    int? bestInstanceId;
+    int lowestFailures = 999;
+    
+    for (final id in _failedInstanceIds) {
+      final failures = _instanceFailureCount[id] ?? 0;
+      if (failures < lowestFailures) {
+        lowestFailures = failures;
+        bestInstanceId = id;
+      }
+    }
+    
+    if (bestInstanceId == null) return false;
+    
+    // Don't try to recover if it's failed too many times
+    if (lowestFailures >= 3) return false;
+    
+    // Wait longer for ports to be released
+    await Future.delayed(const Duration(seconds: 2));
+    
+    final instanceId = bestInstanceId; // Capture for use in catch block
+    try {
+      final instance = _processManager!.instances.firstWhere((i) => i.id == instanceId);
+      // Try a dummy restart to see if the port is available
+      final originalAddress = _processManager!.extractOutboundAddress(baseConfig) ?? 'placeholder';
+      await _processManager!.updateInstanceAddress(instance, originalAddress, baseConfig);
+      
+      // Success - remove from failed set
+      _failedInstanceIds.remove(instanceId);
+      _instanceFailureCount[instanceId] = 0;
+      return true;
+    } catch (e) {
+      // Still failed, increment failure count
+      _instanceFailureCount[instanceId] = (_instanceFailureCount[instanceId] ?? 0) + 1;
+      return false;
+    }
+  }
+
+  /// Test an IP with an instance, handling failures gracefully
+  Future<CdnScanResult> _testIpWithInstanceSafe(
     XrayInstance instance,
     String ip,
     Map<String, dynamic> baseConfig,
   ) async {
+    // Check if instance is already marked as failed
+    if (_failedInstanceIds.contains(instance.id)) {
+      return CdnScanResult(
+        ip: ip,
+        success: false,
+        errorMessage: 'Instance unavailable',
+      );
+    }
+
+    // Serialize restarts to avoid overwhelming the system
+    while (_restartInProgress) {
+      await Future.delayed(const Duration(milliseconds: 50));
+      if (_shouldStop) {
+        return CdnScanResult(
+          ip: ip,
+          success: false,
+          errorMessage: 'Scan stopped',
+        );
+      }
+    }
+
     try {
+      _restartInProgress = true;
+      
       // Update the instance to use the new IP
       await _processManager!.updateInstanceAddress(instance, ip, baseConfig);
+      
+      _restartInProgress = false;
+      
+      // Reset failure count on successful restart
+      _instanceFailureCount[instance.id] = 0;
 
       // Test through the proxy
       return await _testWithSocks5Proxy(ip, instance.port);
     } on XrayStartupException catch (e) {
+      _restartInProgress = false;
+      
+      // Track this failure
+      _instanceFailureCount[instance.id] = (_instanceFailureCount[instance.id] ?? 0) + 1;
+      
+      // Mark instance as failed after multiple failures
+      if ((_instanceFailureCount[instance.id] ?? 0) >= 2) {
+        _failedInstanceIds.add(instance.id);
+      }
+      
       return CdnScanResult(
         ip: ip,
         success: false,
-        errorMessage: 'Xray error: ${e.message}',
+        errorMessage: 'Xray restart failed: ${e.message}',
       );
     } catch (e) {
+      _restartInProgress = false;
       return CdnScanResult(
         ip: ip,
         success: false,
@@ -415,15 +535,14 @@ class CdnConfigScanner {
     }
   }
 
+
   /// Clean up all resources
   Future<void> _cleanup() async {
-    // Kill any active curl processes
-    for (final process in _activeProcesses) {
-      try {
-        process.kill();
-      } catch (_) {}
-    }
-    _activeProcesses.clear();
+    _restartInProgress = false;
+
+    // Clear tracking state
+    _failedInstanceIds.clear();
+    _instanceFailureCount.clear();
 
     // Stop all xray instances
     if (_processManager != null) {
