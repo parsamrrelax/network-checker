@@ -623,6 +623,28 @@ class _DnsHunterScreenState extends State<DnsHunterScreen> {
                           color: colorScheme.onPrimaryContainer.withValues(alpha: 0.8),
                         ),
                       ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: () {
+                            final topIps = controller.cleanResults
+                                .take(10)
+                                .map((result) => result.ip)
+                                .join('\n');
+                            Clipboard.setData(ClipboardData(text: topIps));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Top 10 DNS IPs copied to clipboard'),
+                                behavior: SnackBarBehavior.floating,
+                                duration: Duration(seconds: 2),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.copy),
+                          label: const Text('Copy Top 10 IPs'),
+                        ),
+                      ),
                     ],
                   ),
                 ).animate().fadeIn().scale(begin: const Offset(0.95, 0.95)),
