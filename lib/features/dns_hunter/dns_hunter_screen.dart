@@ -337,7 +337,7 @@ class _DnsHunterScreenState extends State<DnsHunterScreen> {
                     : null,
             tristate: true,
             onChanged: (value) {
-              if (value == true || value == null) {
+              if (value == true) {
                 // Select all in this provider
                 for (final range in ranges) {
                   if (!controller.selectedRanges.contains(range)) {
@@ -345,7 +345,7 @@ class _DnsHunterScreenState extends State<DnsHunterScreen> {
                   }
                 }
               } else {
-                // Deselect all in this provider
+                // Deselect all in this provider (false or null)
                 for (final range in ranges) {
                   if (controller.selectedRanges.contains(range)) {
                     controller.toggleRangeSelection(range);
@@ -621,6 +621,28 @@ class _DnsHunterScreenState extends State<DnsHunterScreen> {
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: colorScheme.onPrimaryContainer.withValues(alpha: 0.8),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: () {
+                            final topIps = controller.cleanResults
+                                .take(10)
+                                .map((result) => result.ip)
+                                .join('\n');
+                            Clipboard.setData(ClipboardData(text: topIps));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Top 10 DNS IPs copied to clipboard'),
+                                behavior: SnackBarBehavior.floating,
+                                duration: Duration(seconds: 2),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.copy),
+                          label: const Text('Copy Top 10 IPs'),
                         ),
                       ),
                     ],

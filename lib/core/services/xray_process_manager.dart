@@ -42,9 +42,10 @@ class XrayInstance {
   Process process;
   final String configPath;
   bool isAvailable;
-  StreamSubscription<String>? _stdoutSubscription;
-  StreamSubscription<String>? _stderrSubscription;
+  StreamSubscription<List<int>>? _stdoutSubscription;
+  StreamSubscription<List<int>>? _stderrSubscription;
   final List<String> _errorLog = [];
+  bool _streamsAttached = false;
 
   XrayInstance({
     required this.id,
@@ -64,7 +65,12 @@ class XrayInstance {
     }
   }
 
+  void clearErrors() {
+    _errorLog.clear();
+  }
+
   Future<void> cancelSubscriptions() async {
+    _streamsAttached = false;
     await _stdoutSubscription?.cancel();
     await _stderrSubscription?.cancel();
     _stdoutSubscription = null;
@@ -302,16 +308,40 @@ class XrayProcessManager {
 
   /// Set up stdout/stderr listeners for an instance
   void _setupProcessListeners(XrayInstance instance) {
-    instance._stdoutSubscription =
-        instance.process.stdout.transform(utf8.decoder).listen((data) {
-      debugPrint('Xray[${instance.id}]: $data');
-    });
+    // Close stdin immediately - we don't need to write to xray
+    instance.process.stdin.close();
+    
+    // Only attach to streams if not already attached
+    if (instance._streamsAttached) return;
+    instance._streamsAttached = true;
 
-    instance._stderrSubscription =
-        instance.process.stderr.transform(utf8.decoder).listen((data) {
-      debugPrint('Xray[${instance.id}] ERR: $data');
-      instance.addError(data);
-    });
+    // Listen to raw bytes and decode manually to avoid creating extra stream transformers
+    instance._stdoutSubscription = instance.process.stdout.listen(
+      (data) {
+        try {
+          final text = utf8.decode(data, allowMalformed: true);
+          debugPrint('Xray[${instance.id}]: $text');
+        } catch (_) {}
+      },
+      onDone: () {
+        instance._stdoutSubscription = null;
+      },
+      cancelOnError: false,
+    );
+
+    instance._stderrSubscription = instance.process.stderr.listen(
+      (data) {
+        try {
+          final text = utf8.decode(data, allowMalformed: true);
+          debugPrint('Xray[${instance.id}] ERR: $text');
+          instance.addError(text);
+        } catch (_) {}
+      },
+      onDone: () {
+        instance._stderrSubscription = null;
+      },
+      cancelOnError: false,
+    );
   }
 
   /// Wait for all instances to be ready with proper error detection
@@ -365,16 +395,14 @@ class XrayProcessManager {
           instance.port,
           timeout: const Duration(milliseconds: 200),
         );
-        await socket.close();
+        socket.destroy(); // Use destroy() to immediately release FD
         socket = null;
         return; // Port is ready
       } on SocketException {
         // Port not ready yet, continue waiting
       } finally {
         // Ensure socket is cleaned up
-        try {
-          await socket?.close();
-        } catch (_) {}
+        socket?.destroy();
         socket = null;
       }
     }
@@ -396,6 +424,52 @@ class XrayProcessManager {
     );
   }
 
+  /// Wait for a port to be released (not in use by any process)
+  Future<bool> _waitForPortRelease(int port, Duration timeout) async {
+    final deadline = DateTime.now().add(timeout);
+    
+    while (DateTime.now().isBefore(deadline)) {
+      if (await _isPortAvailable(port)) {
+        return true;
+      }
+      await Future.delayed(const Duration(milliseconds: 50));
+    }
+    return false;
+  }
+
+  /// Kill a process and wait for it to fully terminate, ensuring streams are drained
+  Future<void> _terminateProcess(Process process, {XrayInstance? instance}) async {
+    // DON'T cancel subscriptions first - let them drain naturally when process exits
+    
+    // Try graceful termination first (SIGTERM)
+    process.kill(ProcessSignal.sigterm);
+    
+    try {
+      final exitCode = await process.exitCode.timeout(
+        const Duration(milliseconds: 500),
+      );
+      debugPrint('Process terminated gracefully with code $exitCode');
+    } on TimeoutException {
+      // Force kill if graceful termination didn't work
+      debugPrint('Force killing process...');
+      process.kill(ProcessSignal.sigkill);
+      try {
+        await process.exitCode.timeout(const Duration(milliseconds: 500));
+      } catch (_) {
+        // Ignore - process should be dead now
+      }
+    }
+    
+    // Now that process is dead, cancel subscriptions - the streams should complete naturally
+    // This is important to release the subscription resources
+    if (instance != null) {
+      await instance.cancelSubscriptions();
+    }
+    
+    // Give a tiny bit of time for OS to clean up the pipe FDs
+    await Future.delayed(const Duration(milliseconds: 10));
+  }
+
   /// Update an instance's config to use a new IP address
   Future<void> updateInstanceAddress(
       XrayInstance instance, String newAddress, Map<String, dynamic> baseConfig) async {
@@ -405,42 +479,62 @@ class XrayProcessManager {
     // Write updated config
     await File(instance.configPath).writeAsString(json.encode(newConfig));
 
-    // Cancel existing subscriptions before killing
-    await instance.cancelSubscriptions();
+    // Terminate the process properly - this will cancel subscriptions after process exits
+    await _terminateProcess(instance.process, instance: instance);
 
-    // Kill and wait for the process to exit
-    instance.process.kill();
-    try {
-      await instance.process.exitCode.timeout(
-        const Duration(seconds: 2),
-        onTimeout: () {
-          instance.process.kill(ProcessSignal.sigkill);
-          return -1;
-        },
-      );
-    } catch (_) {
-      // Process might have already exited
+    // Wait for the port to be released by the OS
+    final portReleased = await _waitForPortRelease(
+      instance.port, 
+      const Duration(seconds: 3),
+    );
+    
+    if (!portReleased) {
+      debugPrint('Warning: Port ${instance.port} not released after timeout, trying anyway...');
     }
 
     final xrayPath = await _binaryService.getXrayBinaryPath();
     final xrayDir = await _binaryService.getXrayDirectory();
 
-    final newProcess = await Process.start(
-      xrayPath,
-      ['-c', instance.configPath],
-      workingDirectory: xrayDir.path,
-    );
+    // Retry starting the process with backoff
+    Process? newProcess;
+    Exception? lastError;
+    
+    for (int attempt = 0; attempt < 3; attempt++) {
+      try {
+        newProcess = await Process.start(
+          xrayPath,
+          ['-c', instance.configPath],
+          workingDirectory: xrayDir.path,
+        );
+        break; // Success, exit retry loop
+      } catch (e) {
+        lastError = e as Exception;
+        debugPrint('Failed to start xray (attempt ${attempt + 1}/3): $e');
+        // Wait before retry with increasing delay
+        await Future.delayed(Duration(milliseconds: 100 * (attempt + 1)));
+      }
+    }
+
+    if (newProcess == null) {
+      instance.isAvailable = false;
+      throw XrayStartupException(
+        'Failed to start xray after 3 attempts: $lastError',
+        instanceId: instance.id,
+        port: instance.port,
+      );
+    }
 
     // Update instance with new process
     instance.process = newProcess;
-    instance._errorLog.clear();
+    instance.clearErrors();
+    instance._streamsAttached = false; // Reset so new streams get attached
 
     // Set up new listeners
     _setupProcessListeners(instance);
 
-    // Wait for the port to be ready with error detection
+    // Wait for the port to be ready with error detection and retry
     try {
-      await _waitForPortOrError(instance, const Duration(seconds: 5));
+      await _waitForPortOrErrorWithRetry(instance, const Duration(seconds: 5));
     } catch (e) {
       // If the instance fails to start, mark it as unavailable but don't throw
       // This allows the scan to continue with remaining instances
@@ -450,21 +544,74 @@ class XrayProcessManager {
     }
   }
 
+  /// Wait for port to be ready with retry logic
+  Future<void> _waitForPortOrErrorWithRetry(
+      XrayInstance instance, Duration timeout) async {
+    final deadline = DateTime.now().add(timeout);
+    Socket? socket;
+    int connectAttempts = 0;
+
+    while (DateTime.now().isBefore(deadline)) {
+      // Check if process has exited (error condition)
+      final exitCodeFuture = instance.process.exitCode;
+      final checkResult = await Future.any([
+        exitCodeFuture.then((code) => ('exited', code)),
+        Future.delayed(const Duration(milliseconds: 100))
+            .then((_) => ('timeout', -1)),
+      ]);
+
+      if (checkResult.$1 == 'exited') {
+        final exitCode = checkResult.$2;
+        final errors = instance.errorLog.join('\n');
+        throw XrayStartupException(
+          'Xray process exited with code $exitCode. Errors:\n$errors',
+          instanceId: instance.id,
+          port: instance.port,
+        );
+      }
+
+      // Try to connect to the port
+      try {
+        socket = await Socket.connect(
+          '127.0.0.1',
+          instance.port,
+          timeout: const Duration(milliseconds: 300),
+        );
+        socket.destroy(); // Use destroy() to immediately release FD
+        socket = null;
+        return; // Port is ready
+      } on SocketException {
+        connectAttempts++;
+        // Port not ready yet, continue waiting
+      } finally {
+        // Ensure socket is cleaned up
+        socket?.destroy();
+        socket = null;
+      }
+    }
+
+    // Timeout reached - check for any errors in the log
+    final errors = instance.errorLog;
+    if (errors.isNotEmpty) {
+      throw XrayStartupException(
+        'Port ${instance.port} did not become ready after $connectAttempts attempts. Xray errors:\n${errors.join('\n')}',
+        instanceId: instance.id,
+        port: instance.port,
+      );
+    }
+
+    throw XrayStartupException(
+      'Port ${instance.port} did not become ready within timeout ($connectAttempts connection attempts)',
+      instanceId: instance.id,
+      port: instance.port,
+    );
+  }
+
   /// Kill a single instance and clean up its resources
   Future<void> _killInstance(XrayInstance instance) async {
     try {
-      // Cancel subscriptions first
-      await instance.cancelSubscriptions();
-
-      // Kill the process
-      instance.process.kill();
-      await instance.process.exitCode.timeout(
-        const Duration(seconds: 2),
-        onTimeout: () {
-          instance.process.kill(ProcessSignal.sigkill);
-          return -1;
-        },
-      );
+      // Terminate the process - this will also cancel subscriptions after process exits
+      await _terminateProcess(instance.process, instance: instance);
     } catch (e) {
       debugPrint('Error killing xray instance ${instance.id}: $e');
     }
