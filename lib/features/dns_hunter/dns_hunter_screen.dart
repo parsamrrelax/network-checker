@@ -337,7 +337,7 @@ class _DnsHunterScreenState extends State<DnsHunterScreen> {
                     : null,
             tristate: true,
             onChanged: (value) {
-              if (value == true || value == null) {
+              if (value == true) {
                 // Select all in this provider
                 for (final range in ranges) {
                   if (!controller.selectedRanges.contains(range)) {
@@ -345,7 +345,7 @@ class _DnsHunterScreenState extends State<DnsHunterScreen> {
                   }
                 }
               } else {
-                // Deselect all in this provider
+                // Deselect all in this provider (false or null)
                 for (final range in ranges) {
                   if (controller.selectedRanges.contains(range)) {
                     controller.toggleRangeSelection(range);
