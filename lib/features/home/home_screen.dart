@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
 import '../../core/widgets/custom_title_bar.dart';
+import '../about/about_screen.dart';
 import '../cdn_config_scan/cdn_config_scan_screen.dart';
 import '../dns_hunter/dns_hunter_screen.dart';
 import '../dns_scanner/dns_scanner_screen.dart';
@@ -26,6 +27,8 @@ class _HomeScreenState extends State<HomeScreen> {
   static final bool _showCdnScan = Platform.isLinux || Platform.isWindows || Platform.isAndroid;
   // SMS Encoder is only available on Android
   static final bool _showSmsEncoder = Platform.isAndroid;
+  // About page is only available on desktop
+  static final bool _showAbout = Platform.isLinux || Platform.isWindows || Platform.isMacOS;
 
   List<Widget> get _screens => [
     const DomainCheckerScreen(),
@@ -35,6 +38,11 @@ class _HomeScreenState extends State<HomeScreen> {
     const VlessConfigModifierScreen(),
     if (_showSmsEncoder) const SmsEncoderScreen(),
     if (_showCdnScan) const CdnConfigScanScreen(),
+  ];
+
+  List<Widget> get _desktopScreens => [
+    ..._screens,
+    if (_showAbout) const AboutScreen(),
   ];
 
   List<NavigationDestination> get _destinations => [
@@ -114,6 +122,12 @@ class _HomeScreenState extends State<HomeScreen> {
         icon: Icon(Icons.speed_outlined),
         selectedIcon: Icon(Icons.speed),
         label: Text('CDN Scan'),
+      ),
+    if (_showAbout)
+      const NavigationRailDestination(
+        icon: Icon(Icons.info_outline),
+        selectedIcon: Icon(Icons.info),
+        label: Text('About'),
       ),
   ];
 
@@ -230,7 +244,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                     child: KeyedSubtree(
                       key: ValueKey(_selectedIndex),
-                      child: _screens[_selectedIndex],
+                      child: _desktopScreens[_selectedIndex],
                     ),
                   ),
                 ),

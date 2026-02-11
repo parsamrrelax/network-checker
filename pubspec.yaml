@@ -52,6 +52,7 @@ flutter:
     - assets/fonts/
     - assets/geoip.dat
     - assets/geosite.dat
+    - assets/duckie.png
   fonts:
     - family: MonoVazir
       fonts:
