@@ -22,8 +22,8 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
 
-  // CDN Scan is only available on desktop (Linux/Windows)
-  static final bool _showCdnScan = !Platform.isAndroid;
+  // CDN Scan is available on desktop (Linux/Windows) and Android
+  static final bool _showCdnScan = Platform.isLinux || Platform.isWindows || Platform.isAndroid;
   // SMS Encoder is only available on Android
   static final bool _showSmsEncoder = Platform.isAndroid;
 

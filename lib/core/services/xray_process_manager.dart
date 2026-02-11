@@ -227,7 +227,11 @@ class XrayProcessManager {
   ) async {
     // Ensure we have xray binary
     final xrayPath = await _binaryService.getXrayBinaryPath();
-    if (!await File(xrayPath).exists()) {
+    final binaryExists = await File(xrayPath).exists();
+    if (Platform.isAndroid) {
+      debugPrint('[XrayProcess] Binary path: $xrayPath, exists: $binaryExists');
+    }
+    if (!binaryExists) {
       throw StateError('Xray binary not found. Please download it first.');
     }
 
@@ -247,12 +251,22 @@ class XrayProcessManager {
     final configPath = '${_tempConfigDir!.path}/config_$configSuffix.json';
     await File(configPath).writeAsString(json.encode(instanceConfig));
 
+    if (Platform.isAndroid) {
+      debugPrint('[XrayProcess] Starting xray for IP=$ip on port=$port');
+      debugPrint('[XrayProcess] Config: $configPath');
+      debugPrint('[XrayProcess] Working dir: ${xrayDir.path}');
+    }
+
     try {
       final process = await Process.start(
         xrayPath,
         ['-c', configPath],
         workingDirectory: xrayDir.path,
       );
+
+      if (Platform.isAndroid) {
+        debugPrint('[XrayProcess] Process started, pid=${process.pid}');
+      }
 
       final instance = XrayInstance(
         id: _instances.length,
@@ -265,9 +279,15 @@ class XrayProcessManager {
       // Set up stream listeners and track subscriptions
       _setupProcessListeners(instance);
 
+      // On Android, always capture early output to help debug
+      if (Platform.isAndroid) {
+        _setupAndroidDebugListeners(instance);
+      }
+
       _instances.add(instance);
       return instance;
     } catch (e) {
+      debugPrint('[XrayProcess] FAILED to start xray: $e');
       _releasePort(port);
       throw XrayStartupException(
         'Failed to start xray: $e',
@@ -276,12 +296,24 @@ class XrayProcessManager {
     }
   }
 
+  /// Extra debug listeners for Android to capture xray startup output
+  void _setupAndroidDebugListeners(XrayInstance instance) {
+    // Check if process exits immediately (crash/permission error)
+    instance.process.exitCode.then((code) {
+      debugPrint('[XrayProcess] Instance ${instance.id} (pid=${instance.process.pid}) exited with code $code');
+      if (code != 0) {
+        debugPrint('[XrayProcess] ERROR: xray exited abnormally! Errors: ${instance.errorLog.join('\n')}');
+      }
+    });
+  }
+
   /// Set up stdout/stderr listeners for an instance
   void _setupProcessListeners(XrayInstance instance) {
     // Close stdin immediately - we don't need to write to xray
     instance.process.stdin.close();
 
-    if (!enableProcessLogs) {
+    // On Android, always capture process output for debugging
+    if (!enableProcessLogs && !Platform.isAndroid) {
       return;
     }
 
