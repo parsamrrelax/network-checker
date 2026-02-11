@@ -133,20 +133,40 @@ class CdnConfigScanController extends ChangeNotifier {
     return base * 2;
   }
 
-  /// Check if xray binary is installed
+  /// Check if xray binary is installed.
+  /// On Android, automatically extracts the bundled binary if needed.
   Future<void> checkBinaryStatus() async {
     _binaryState = BinaryDownloadState.checking;
     notifyListeners();
 
     try {
-      final isInstalled = await _binaryService.isXrayInstalled();
-      final hasGeoData = await _binaryService.hasGeoData();
-      
-      if (isInstalled && hasGeoData) {
-        _installedVersion = await _binaryService.getInstalledVersion();
-        _binaryState = BinaryDownloadState.installed;
+      if (Platform.isAndroid) {
+        // On Android, the xray binary is bundled with the app.
+        // Check if it has been extracted; if not, extract automatically.
+        final isInstalled = await _binaryService.isXrayInstalled();
+        final hasGeoData = await _binaryService.hasGeoData();
+
+        if (isInstalled && hasGeoData) {
+          _installedVersion = 'bundled';
+          _binaryState = BinaryDownloadState.installed;
+        } else {
+          _binaryState = BinaryDownloadState.extracting;
+          notifyListeners();
+
+          await _binaryService.setupBundledBinary();
+          _installedVersion = 'bundled';
+          _binaryState = BinaryDownloadState.installed;
+        }
       } else {
-        _binaryState = BinaryDownloadState.notInstalled;
+        final isInstalled = await _binaryService.isXrayInstalled();
+        final hasGeoData = await _binaryService.hasGeoData();
+
+        if (isInstalled && hasGeoData) {
+          _installedVersion = await _binaryService.getInstalledVersion();
+          _binaryState = BinaryDownloadState.installed;
+        } else {
+          _binaryState = BinaryDownloadState.notInstalled;
+        }
       }
     } catch (e) {
       _binaryState = BinaryDownloadState.error;

@@ -25,7 +25,10 @@ class _CdnConfigScanScreenState extends State<CdnConfigScanScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final controller = context.read<CdnConfigScanController>();
       controller.initialize();
-      controller.fetchLatestVersion();
+      // On Android, xray is bundled — no need to fetch versions from GitHub
+      if (!Platform.isAndroid) {
+        controller.fetchLatestVersion();
+      }
     });
   }
 
@@ -354,7 +357,7 @@ class _BinarySetupStep extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Xray Installed',
+                          Platform.isAndroid ? 'Xray Ready' : 'Xray Installed',
                           style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
@@ -362,7 +365,9 @@ class _BinarySetupStep extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          'Version: ${controller.installedVersion ?? 'Unknown'}',
+                          Platform.isAndroid
+                              ? 'Bundled with app'
+                              : 'Version: ${controller.installedVersion ?? 'Unknown'}',
                           style: TextStyle(
                             color: colorScheme.onSurfaceVariant,
                           ),
@@ -373,15 +378,17 @@ class _BinarySetupStep extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            TextButton.icon(
-              onPressed: () async {
-                await controller.deleteXray();
-                await controller.fetchLatestVersion();
-              },
-              icon: const Icon(Icons.refresh),
-              label: const Text('Download different version'),
-            ),
+            if (!Platform.isAndroid) ...[
+              const SizedBox(height: 16),
+              TextButton.icon(
+                onPressed: () async {
+                  await controller.deleteXray();
+                  await controller.fetchLatestVersion();
+                },
+                icon: const Icon(Icons.refresh),
+                label: const Text('Download different version'),
+              ),
+            ],
           ],
         );
 
@@ -395,25 +402,30 @@ class _BinarySetupStep extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               CircularProgressIndicator(
-                value: controller.downloadProgress,
+                // On Android, extraction has no granular progress
+                value: Platform.isAndroid ? null : controller.downloadProgress,
                 color: colorScheme.primary,
               ),
               const SizedBox(height: 16),
               Text(
-                controller.binaryState == BinaryDownloadState.downloading
-                    ? 'Downloading xray...'
-                    : 'Extracting and setting up...',
+                Platform.isAndroid
+                    ? 'Setting up bundled xray...'
+                    : controller.binaryState == BinaryDownloadState.downloading
+                        ? 'Downloading xray...'
+                        : 'Extracting and setting up...',
                 style: TextStyle(color: colorScheme.onSurfaceVariant),
               ),
-              const SizedBox(height: 8),
-              Text(
-                '${(controller.downloadProgress * 100).toStringAsFixed(0)}%',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.primary,
+              if (!Platform.isAndroid) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '${(controller.downloadProgress * 100).toStringAsFixed(0)}%',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.primary,
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         );
@@ -1431,11 +1443,17 @@ class _SettingsDialogState extends State<_SettingsDialog> {
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.info_outline),
-                  title: Text('Xray ${widget.installedVersion}'),
-                  trailing: TextButton(
-                    onPressed: widget.onRedownload,
-                    child: const Text('Change'),
+                  title: Text(
+                    Platform.isAndroid
+                        ? 'Xray (Bundled)'
+                        : 'Xray ${widget.installedVersion}',
                   ),
+                  trailing: Platform.isAndroid
+                      ? null
+                      : TextButton(
+                          onPressed: widget.onRedownload,
+                          child: const Text('Change'),
+                        ),
                 ),
                 const Divider(),
               ],
@@ -1502,7 +1520,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
                   seconds: int.tryParse(_timeoutController.text) ?? 10),
               testUrl: _testUrlController.text.isNotEmpty
                   ? _testUrlController.text
-                  : 'https://www.gstatic.com/generate_204',
+                  : 'https://www.google.com/generate_204',
               basePort: int.tryParse(_basePortController.text) ?? 10808,
             );
             Navigator.pop(context, newConfig);

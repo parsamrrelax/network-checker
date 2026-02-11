@@ -40,6 +40,14 @@ android {
             signingConfig = signingConfigs.getByName("release")
         }
     }
+
+    // Ensure native libs (jniLibs) are extracted to disk so we can execute
+    // the bundled xray binary via Process.start() on Android.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 flutter {

@@ -227,7 +227,11 @@ class XrayProcessManager {
   ) async {
     // Ensure we have xray binary
     final xrayPath = await _binaryService.getXrayBinaryPath();
-    if (!await File(xrayPath).exists()) {
+    final binaryExists = await File(xrayPath).exists();
+    if (kDebugMode && Platform.isAndroid) {
+      debugPrint('[XrayProcess] Binary path: $xrayPath, exists: $binaryExists');
+    }
+    if (!binaryExists) {
       throw StateError('Xray binary not found. Please download it first.');
     }
 
@@ -247,12 +251,22 @@ class XrayProcessManager {
     final configPath = '${_tempConfigDir!.path}/config_$configSuffix.json';
     await File(configPath).writeAsString(json.encode(instanceConfig));
 
+    if (kDebugMode && Platform.isAndroid) {
+      debugPrint('[XrayProcess] Starting xray for IP=$ip on port=$port');
+      debugPrint('[XrayProcess] Config: $configPath');
+      debugPrint('[XrayProcess] Working dir: ${xrayDir.path}');
+    }
+
     try {
       final process = await Process.start(
         xrayPath,
         ['-c', configPath],
         workingDirectory: xrayDir.path,
       );
+
+      if (kDebugMode && Platform.isAndroid) {
+        debugPrint('[XrayProcess] Process started, pid=${process.pid}');
+      }
 
       final instance = XrayInstance(
         id: _instances.length,
@@ -265,15 +279,34 @@ class XrayProcessManager {
       // Set up stream listeners and track subscriptions
       _setupProcessListeners(instance);
 
+      // On Android in debug mode, capture early output to help diagnose issues
+      if (kDebugMode && Platform.isAndroid) {
+        _setupAndroidDebugListeners(instance);
+      }
+
       _instances.add(instance);
       return instance;
     } catch (e) {
+      if (kDebugMode) debugPrint('[XrayProcess] FAILED to start xray: $e');
       _releasePort(port);
       throw XrayStartupException(
         'Failed to start xray: $e',
         port: port,
       );
     }
+  }
+
+  /// Extra debug listeners for Android to capture xray startup output (debug only)
+  void _setupAndroidDebugListeners(XrayInstance instance) {
+    // Check if process exits immediately (crash/permission error)
+    instance.process.exitCode.then((code) {
+      if (kDebugMode) {
+        debugPrint('[XrayProcess] Instance ${instance.id} (pid=${instance.process.pid}) exited with code $code');
+        if (code != 0) {
+          debugPrint('[XrayProcess] ERROR: xray exited abnormally! Errors: ${instance.errorLog.join('\n')}');
+        }
+      }
+    });
   }
 
   /// Set up stdout/stderr listeners for an instance

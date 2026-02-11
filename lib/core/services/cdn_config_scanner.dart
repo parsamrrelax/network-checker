@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_curl/flutter_curl.dart' as curl;
 
 import 'xray_binary_service.dart';
 import 'xray_process_manager.dart';
@@ -70,7 +71,7 @@ class CdnScanConfig {
     this.concurrentInstances = 5,
     this.timeout = const Duration(seconds: 10),
     this.startupDelay = const Duration(seconds: 2),
-    this.testUrl = 'https://www.gstatic.com/generate_204',
+    this.testUrl = 'https://www.google.com/generate_204',
     this.basePort = 10808,
     this.enableXrayLogs = kDebugMode,
   });
@@ -100,6 +101,7 @@ class CdnConfigScanner {
   final CdnScanConfig config;
 
   XrayProcessManager? _processManager;
+  curl.Client? _curlClient;
   bool _isScanning = false;
   bool _shouldStop = false;
 
@@ -194,9 +196,17 @@ class CdnConfigScanner {
     return true;
   }
 
-  /// Test connection through SOCKS5 proxy using curl command
-  /// This feature is only available on desktop (Linux/Windows)
+  /// Test connection through SOCKS5 proxy.
+  /// Uses shell curl on desktop (Linux/Windows) and libcurl via flutter_curl on Android.
   Future<CdnScanResult> _testWithSocks5Proxy(String ip, int proxyPort) async {
+    if (Platform.isAndroid) {
+      return _testWithSocks5ProxyDart(ip, proxyPort);
+    }
+    return _testWithSocks5ProxyCurl(ip, proxyPort);
+  }
+
+  /// Test connection through SOCKS5 proxy using curl command (Linux/Windows)
+  Future<CdnScanResult> _testWithSocks5ProxyCurl(String ip, int proxyPort) async {
     try {
       // Use Process.run() instead of Process.start() to avoid file descriptor leaks
       // Process.run() automatically handles stdout/stderr cleanup
@@ -267,6 +277,68 @@ class CdnConfigScanner {
     }
   }
 
+  /// Test connection through SOCKS5 proxy using flutter_curl / libcurl (Android).
+  /// Follows the exact same logic as the desktop curl command version.
+  Future<CdnScanResult> _testWithSocks5ProxyDart(String ip, int proxyPort) async {
+    try {
+      assert(_curlClient != null, 'curl client must be initialized before testing');
+
+      final stopwatch = Stopwatch()..start();
+
+      final response = await _curlClient!.send(curl.Request(
+        method: 'GET',
+        url: config.testUrl,
+        proxy: 'socks5h://127.0.0.1:$proxyPort',
+        verifySSL: false,
+        connectTimeout: config.timeout,
+        timeout: config.timeout + const Duration(seconds: 2),
+      )).timeout(config.timeout + const Duration(seconds: 5));
+
+      stopwatch.stop();
+      final timeMs = stopwatch.elapsedMilliseconds.toDouble();
+
+      // Check for curl-level errors (equivalent to curl exit code != 0)
+      if (response.errorCode != null && response.errorCode != 0) {
+        final errorMsg = (response.errorMessage?.isNotEmpty == true)
+            ? response.errorMessage!
+            : 'curl error code ${response.errorCode}';
+        return CdnScanResult(
+          ip: ip,
+          success: false,
+          errorMessage: errorMsg,
+        );
+      }
+
+      // Parse status code – same logic as desktop curl version
+      final statusCode = response.statusCode;
+      if (statusCode == 204 || (statusCode >= 200 && statusCode < 300)) {
+        return CdnScanResult(
+          ip: ip,
+          success: true,
+          latencyMs: timeMs,
+        );
+      } else {
+        return CdnScanResult(
+          ip: ip,
+          success: false,
+          errorMessage: 'HTTP $statusCode',
+        );
+      }
+    } on TimeoutException {
+      return CdnScanResult(
+        ip: ip,
+        success: false,
+        errorMessage: 'Connection timed out',
+      );
+    } catch (e) {
+      return CdnScanResult(
+        ip: ip,
+        success: false,
+        errorMessage: e.toString(),
+      );
+    }
+  }
+
   /// Start scanning IPs
   Stream<CdnScanProgress> scanIps(
     List<String> ips,
@@ -301,6 +373,15 @@ class CdnConfigScanner {
         basePort: config.basePort,
         enableProcessLogs: config.enableXrayLogs,
       );
+
+      // Initialize curl client for Android (uses libcurl instead of shell curl)
+      if (Platform.isAndroid) {
+        _curlClient = curl.Client(
+          verifySSL: false,
+          verbose: kDebugMode,
+        );
+        await _curlClient!.init();
+      }
 
       final ipQueue = List<String>.from(ips);
       int ipIndex = 0;
@@ -368,7 +449,12 @@ class CdnConfigScanner {
   ) async {
     XrayInstance? instance;
     try {
+      if (kDebugMode) debugPrint('[CdnScan] Starting xray instance for IP=$ip');
       instance = await _processManager!.startInstanceForIp(baseConfig, ip);
+      if (kDebugMode) {
+        debugPrint('[CdnScan] Xray started for IP=$ip, port=${instance.port}, pid=${instance.process.pid}');
+        debugPrint('[CdnScan] Waiting ${config.startupDelay.inMilliseconds}ms for xray startup...');
+      }
       await Future.delayed(config.startupDelay);
 
       if (_shouldStop) {
@@ -379,14 +465,40 @@ class CdnConfigScanner {
         );
       }
 
-      return await _testWithSocks5Proxy(ip, instance.port);
+      // On Android, check if xray process is still alive before testing
+      if (Platform.isAndroid) {
+        final exitCodeFuture = instance.process.exitCode;
+        final aliveCheck = await Future.any([
+          exitCodeFuture.then((code) => 'exited:$code'),
+          Future.delayed(const Duration(milliseconds: 100), () => 'alive'),
+        ]);
+        if (kDebugMode) debugPrint('[CdnScan] Xray process status before test: $aliveCheck');
+        if (aliveCheck.startsWith('exited:')) {
+          final code = aliveCheck.split(':')[1];
+          if (kDebugMode) debugPrint('[CdnScan] ERROR: xray died before proxy test! exit=$code, errors: ${instance.errorLog}');
+          return CdnScanResult(
+            ip: ip,
+            success: false,
+            errorMessage: 'Xray process died (exit=$code)',
+          );
+        }
+      }
+
+      final result = await _testWithSocks5Proxy(ip, instance.port);
+      if (kDebugMode) {
+        debugPrint('[CdnScan] Test result for IP=$ip: success=${result.success}, '
+            'latency=${result.latencyMs}ms, error=${result.errorMessage}');
+      }
+      return result;
     } on XrayStartupException catch (e) {
+      if (kDebugMode) debugPrint('[CdnScan] XrayStartupException for IP=$ip: ${e.message}');
       return CdnScanResult(
         ip: ip,
         success: false,
         errorMessage: 'Xray start failed: ${e.message}',
       );
     } catch (e) {
+      if (kDebugMode) debugPrint('[CdnScan] Exception for IP=$ip: $e');
       return CdnScanResult(
         ip: ip,
         success: false,
@@ -406,6 +518,13 @@ class CdnConfigScanner {
     if (_processManager != null) {
       await _processManager!.stopAll();
       _processManager = null;
+    }
+    // Dispose curl client (Android)
+    if (_curlClient != null) {
+      try {
+        _curlClient!.dispose();
+      } catch (_) {}
+      _curlClient = null;
     }
   }
 

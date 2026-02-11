@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -10,12 +11,27 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// Download progress callback
 typedef DownloadProgressCallback = void Function(int received, int total);
 
+/// Method channel for Android native library directory
+const _nativeLibChannel = MethodChannel('com.rdnbenet.rdnbenet/native_lib');
+
 /// Service for managing xray binary downloads and versions
 class XrayBinaryService {
   static const String _prefXrayVersion = 'xray_version';
   static const String _prefGeoVersion = 'geo_version';
-  
-  /// Get the xray directory path
+
+  /// Cached native library directory path (Android only)
+  static String? _nativeLibDir;
+
+  /// Get the Android native library directory via method channel.
+  /// This is where jniLibs files are installed (executable directory).
+  static Future<String> getNativeLibraryDir() async {
+    if (_nativeLibDir != null) return _nativeLibDir!;
+    _nativeLibDir = await _nativeLibChannel.invokeMethod<String>('getNativeLibraryDir');
+    if (kDebugMode) debugPrint('[XrayBinary] Native lib dir: $_nativeLibDir');
+    return _nativeLibDir!;
+  }
+
+  /// Get the xray directory path (writable directory for configs, geo data, etc.)
   Future<Directory> getXrayDirectory() async {
     final appDir = await getApplicationSupportDirectory();
     final xrayDir = Directory('${appDir.path}/xray');
@@ -25,8 +41,15 @@ class XrayBinaryService {
     return xrayDir;
   }
 
-  /// Get the xray binary path
+  /// Get the xray binary path.
+  /// On Android: uses the native library directory (jniLibs) where the binary
+  /// is pre-installed by Android as libxray.so — this directory is executable.
+  /// On desktop: uses the app support directory where xray is downloaded.
   Future<String> getXrayBinaryPath() async {
+    if (Platform.isAndroid) {
+      final nativeLibDir = await getNativeLibraryDir();
+      return '$nativeLibDir/libxray.so';
+    }
     final xrayDir = await getXrayDirectory();
     if (Platform.isWindows) {
       return '${xrayDir.path}/xray.exe';
@@ -198,6 +221,50 @@ class XrayBinaryService {
     }
   }
 
+  /// Set up the bundled xray environment on Android.
+  /// The xray binary itself lives in the native library directory (jniLibs)
+  /// and is installed by Android automatically. We only need to extract the
+  /// geo data files from Flutter assets to a writable directory that xray
+  /// can use as its working directory.
+  Future<void> setupBundledBinary() async {
+    final xrayDir = await getXrayDirectory();
+
+    if (kDebugMode) {
+      debugPrint('[XrayBinary] Setting up bundled xray environment');
+      final binaryPath = await getXrayBinaryPath();
+      final binaryExists = await File(binaryPath).exists();
+      debugPrint('[XrayBinary] Binary at $binaryPath, exists: $binaryExists');
+      if (binaryExists) {
+        final statResult = await Process.run('ls', ['-la', binaryPath]);
+        debugPrint('[XrayBinary] Binary stat: ${statResult.stdout}');
+      } else {
+        debugPrint('[XrayBinary] WARNING: xray binary not found in native lib dir!');
+      }
+    }
+
+    // Extract geoip.dat from Flutter assets to writable directory
+    final geoipBytes = await rootBundle.load('assets/geoip.dat');
+    final geoipFile = File('${xrayDir.path}/geoip.dat');
+    await geoipFile.writeAsBytes(
+      geoipBytes.buffer.asUint8List(),
+      flush: true,
+    );
+
+    // Extract geosite.dat from Flutter assets to writable directory
+    final geositeBytes = await rootBundle.load('assets/geosite.dat');
+    final geositeFile = File('${xrayDir.path}/geosite.dat');
+    await geositeFile.writeAsBytes(
+      geositeBytes.buffer.asUint8List(),
+      flush: true,
+    );
+
+    // Save version marker
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefXrayVersion, 'bundled');
+    await prefs.setString(_prefGeoVersion, 'bundled');
+    if (kDebugMode) debugPrint('[XrayBinary] Setup complete');
+  }
+
   /// Delete xray installation
   Future<void> deleteXray() async {
     final xrayDir = await getXrayDirectory();
@@ -218,12 +285,14 @@ class XrayBinaryService {
     }
   }
 
-  /// Get platform display name for UI (desktop only)
+  /// Get platform display name for UI
   String getPlatformDisplayName() {
     if (Platform.isWindows) {
       return 'Windows (64-bit)';
     } else if (Platform.isLinux) {
       return 'Linux (64-bit)';
+    } else if (Platform.isAndroid) {
+      return 'Android (Bundled)';
     } else {
       return 'Unknown Platform';
     }
