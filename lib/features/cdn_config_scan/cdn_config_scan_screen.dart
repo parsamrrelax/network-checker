@@ -1520,7 +1520,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
                   seconds: int.tryParse(_timeoutController.text) ?? 10),
               testUrl: _testUrlController.text.isNotEmpty
                   ? _testUrlController.text
-                  : 'https://www.gstatic.com/generate_204',
+                  : 'https://www.google.com/generate_204',
               basePort: int.tryParse(_basePortController.text) ?? 10808,
             );
             Navigator.pop(context, newConfig);

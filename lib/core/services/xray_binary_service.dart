@@ -27,7 +27,7 @@ class XrayBinaryService {
   static Future<String> getNativeLibraryDir() async {
     if (_nativeLibDir != null) return _nativeLibDir!;
     _nativeLibDir = await _nativeLibChannel.invokeMethod<String>('getNativeLibraryDir');
-    debugPrint('[XrayBinary] Native lib dir: $_nativeLibDir');
+    if (kDebugMode) debugPrint('[XrayBinary] Native lib dir: $_nativeLibDir');
     return _nativeLibDir!;
   }
 
@@ -228,23 +228,22 @@ class XrayBinaryService {
   /// can use as its working directory.
   Future<void> setupBundledBinary() async {
     final xrayDir = await getXrayDirectory();
-    debugPrint('[XrayBinary] Setting up bundled xray environment');
 
-    // Verify the binary exists in the native lib directory
-    final binaryPath = await getXrayBinaryPath();
-    final binaryExists = await File(binaryPath).exists();
-    debugPrint('[XrayBinary] Binary at $binaryPath, exists: $binaryExists');
-
-    if (binaryExists) {
-      final statResult = await Process.run('ls', ['-la', binaryPath]);
-      debugPrint('[XrayBinary] Binary stat: ${statResult.stdout}');
-    } else {
-      debugPrint('[XrayBinary] WARNING: xray binary not found in native lib dir!');
+    if (kDebugMode) {
+      debugPrint('[XrayBinary] Setting up bundled xray environment');
+      final binaryPath = await getXrayBinaryPath();
+      final binaryExists = await File(binaryPath).exists();
+      debugPrint('[XrayBinary] Binary at $binaryPath, exists: $binaryExists');
+      if (binaryExists) {
+        final statResult = await Process.run('ls', ['-la', binaryPath]);
+        debugPrint('[XrayBinary] Binary stat: ${statResult.stdout}');
+      } else {
+        debugPrint('[XrayBinary] WARNING: xray binary not found in native lib dir!');
+      }
     }
 
     // Extract geoip.dat from Flutter assets to writable directory
     final geoipBytes = await rootBundle.load('assets/geoip.dat');
-    debugPrint('[XrayBinary] Loaded geoip.dat: ${geoipBytes.lengthInBytes} bytes');
     final geoipFile = File('${xrayDir.path}/geoip.dat');
     await geoipFile.writeAsBytes(
       geoipBytes.buffer.asUint8List(),
@@ -253,22 +252,17 @@ class XrayBinaryService {
 
     // Extract geosite.dat from Flutter assets to writable directory
     final geositeBytes = await rootBundle.load('assets/geosite.dat');
-    debugPrint('[XrayBinary] Loaded geosite.dat: ${geositeBytes.lengthInBytes} bytes');
     final geositeFile = File('${xrayDir.path}/geosite.dat');
     await geositeFile.writeAsBytes(
       geositeBytes.buffer.asUint8List(),
       flush: true,
     );
 
-    // List the working directory contents
-    final lsResult = await Process.run('ls', ['-la', xrayDir.path]);
-    debugPrint('[XrayBinary] Working dir contents:\n${lsResult.stdout}');
-
     // Save version marker
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefXrayVersion, 'bundled');
     await prefs.setString(_prefGeoVersion, 'bundled');
-    debugPrint('[XrayBinary] Setup complete');
+    if (kDebugMode) debugPrint('[XrayBinary] Setup complete');
   }
 
   /// Delete xray installation

@@ -71,7 +71,7 @@ class CdnScanConfig {
     this.concurrentInstances = 5,
     this.timeout = const Duration(seconds: 10),
     this.startupDelay = const Duration(seconds: 2),
-    this.testUrl = 'https://www.gstatic.com/generate_204',
+    this.testUrl = 'https://www.google.com/generate_204',
     this.basePort = 10808,
     this.enableXrayLogs = kDebugMode,
   });
@@ -293,7 +293,7 @@ class CdnConfigScanner {
           ? '/'
           : (uri.hasQuery ? '${uri.path}?${uri.query}' : uri.path);
 
-      debugPrint('[SOCKS5] Connecting to proxy 127.0.0.1:$proxyPort for IP=$ip');
+      if (kDebugMode) debugPrint('[SOCKS5] Connecting to proxy 127.0.0.1:$proxyPort for IP=$ip');
 
       // 1. Connect to the local SOCKS5 proxy (xray instance)
       socket = await Socket.connect(
@@ -301,7 +301,7 @@ class CdnConfigScanner {
         proxyPort,
         timeout: config.timeout,
       );
-      debugPrint('[SOCKS5] Connected to proxy');
+      if (kDebugMode) debugPrint('[SOCKS5] Connected to proxy');
 
       // Set up buffered reading from the socket stream
       final buffer = <int>[];
@@ -316,13 +316,13 @@ class CdnConfigScanner {
           dataReady = null;
         },
         onError: (e) {
-          debugPrint('[SOCKS5] Socket error: $e');
+          if (kDebugMode) debugPrint('[SOCKS5] Socket error: $e');
           socketError = e;
           dataReady?.completeError(e);
           dataReady = null;
         },
         onDone: () {
-          debugPrint('[SOCKS5] Socket done (closed by remote)');
+          if (kDebugMode) debugPrint('[SOCKS5] Socket done (closed by remote)');
           socketDone = true;
           dataReady?.complete();
           dataReady = null;
@@ -343,18 +343,18 @@ class CdnConfigScanner {
       }
 
       // 2. SOCKS5 greeting: VER=5, NMETHODS=1, METHOD=NO_AUTH
-      debugPrint('[SOCKS5] Sending greeting...');
+      if (kDebugMode) debugPrint('[SOCKS5] Sending greeting...');
       socket.add([0x05, 0x01, 0x00]);
       await socket.flush();
 
       final greetResp = await readExactly(2);
-      debugPrint('[SOCKS5] Greeting response: [${greetResp[0]}, ${greetResp[1]}]');
+      if (kDebugMode) debugPrint('[SOCKS5] Greeting response: [${greetResp[0]}, ${greetResp[1]}]');
       if (greetResp[0] != 0x05 || greetResp[1] != 0x00) {
         throw Exception('SOCKS5 auth negotiation failed (got [${greetResp[0]}, ${greetResp[1]}])');
       }
 
       // 3. SOCKS5 CONNECT request: VER, CMD=CONNECT, RSV, ATYP=DOMAIN
-      debugPrint('[SOCKS5] Sending CONNECT to $host:$targetPort');
+      if (kDebugMode) debugPrint('[SOCKS5] Sending CONNECT to $host:$targetPort');
       final hostBytes = utf8.encode(host);
       socket.add([
         0x05, 0x01, 0x00, 0x03,
@@ -365,7 +365,7 @@ class CdnConfigScanner {
 
       // Read CONNECT response header (4 bytes: VER, REP, RSV, ATYP)
       final connResp = await readExactly(4);
-      debugPrint('[SOCKS5] CONNECT response: [${connResp.join(', ')}] (REP=${connResp[1]}, ATYP=${connResp[3]})');
+      if (kDebugMode) debugPrint('[SOCKS5] CONNECT response: [${connResp.join(', ')}] (REP=${connResp[1]}, ATYP=${connResp[3]})');
       if (connResp[1] != 0x00) {
         final repCodes = {
           0x01: 'general SOCKS server failure',
@@ -391,7 +391,7 @@ class CdnConfigScanner {
         case 0x04: // IPv6: 16 bytes addr + 2 bytes port
           await readExactly(18);
       }
-      debugPrint('[SOCKS5] CONNECT handshake complete');
+      if (kDebugMode) debugPrint('[SOCKS5] CONNECT handshake complete');
 
       // 4. Pause (not cancel!) the stream subscription before TLS upgrade.
       // Cancelling a single-subscription stream triggers onCancel which tears
@@ -399,20 +399,19 @@ class CdnConfigScanner {
       // SecureSocket.secure(). Pausing keeps the internals alive so
       // SecureSocket.secure() can detach the raw socket properly.
       sub.pause();
-      debugPrint('[SOCKS5] Stream subscription paused');
 
       Socket httpSocket;
       if (isHttps) {
-        debugPrint('[SOCKS5] Upgrading to TLS for host=$host...');
+        if (kDebugMode) debugPrint('[SOCKS5] Upgrading to TLS for host=$host...');
         try {
           httpSocket = await SecureSocket.secure(
             socket,
             host: host,
             onBadCertificate: (_) => true,
           ).timeout(config.timeout);
-          debugPrint('[SOCKS5] TLS upgrade successful');
+          if (kDebugMode) debugPrint('[SOCKS5] TLS upgrade successful');
         } catch (e) {
-          debugPrint('[SOCKS5] TLS upgrade FAILED: $e');
+          if (kDebugMode) debugPrint('[SOCKS5] TLS upgrade FAILED: $e');
           rethrow;
         }
       } else {
@@ -424,7 +423,7 @@ class CdnConfigScanner {
 
       // 5. Send HTTP request
       final httpReq = 'GET $path HTTP/1.1\r\nHost: $host\r\nConnection: close\r\n\r\n';
-      debugPrint('[SOCKS5] Sending HTTP request: GET $path -> $host');
+      if (kDebugMode) debugPrint('[SOCKS5] Sending HTTP request: GET $path -> $host');
       httpSocket.write(httpReq);
       await httpSocket.flush();
 
@@ -438,20 +437,19 @@ class CdnConfigScanner {
       stopwatch.stop();
       final timeMs = stopwatch.elapsedMilliseconds.toDouble();
       final responseStr = respBuffer.toString();
-      debugPrint('[SOCKS5] HTTP response (first line): ${responseStr.split('\r\n').firstOrNull}');
       final statusMatch = RegExp(r'HTTP/[\d.]+ (\d+)').firstMatch(responseStr);
       final statusCode = int.tryParse(statusMatch?.group(1) ?? '') ?? 0;
-      debugPrint('[SOCKS5] Status=$statusCode, latency=${timeMs.toStringAsFixed(0)}ms');
+      if (kDebugMode) debugPrint('[SOCKS5] Status=$statusCode, latency=${timeMs.toStringAsFixed(0)}ms');
 
       if (statusCode == 204 || (statusCode >= 200 && statusCode < 300)) {
         return CdnScanResult(ip: ip, success: true, latencyMs: timeMs);
       }
       return CdnScanResult(ip: ip, success: false, errorMessage: 'HTTP $statusCode');
     } on TimeoutException catch (e) {
-      debugPrint('[SOCKS5] TIMEOUT for IP=$ip after ${stopwatch.elapsedMilliseconds}ms: $e');
+      if (kDebugMode) debugPrint('[SOCKS5] TIMEOUT for IP=$ip after ${stopwatch.elapsedMilliseconds}ms: $e');
       return CdnScanResult(ip: ip, success: false, errorMessage: 'Connection timed out');
     } catch (e) {
-      debugPrint('[SOCKS5] ERROR for IP=$ip: $e');
+      if (kDebugMode) debugPrint('[SOCKS5] ERROR for IP=$ip: $e');
       return CdnScanResult(ip: ip, success: false, errorMessage: e.toString());
     } finally {
       stopwatch.stop();
@@ -562,11 +560,9 @@ class CdnConfigScanner {
   ) async {
     XrayInstance? instance;
     try {
-      if (Platform.isAndroid) {
-        debugPrint('[CdnScan] Starting xray instance for IP=$ip');
-      }
+      if (kDebugMode) debugPrint('[CdnScan] Starting xray instance for IP=$ip');
       instance = await _processManager!.startInstanceForIp(baseConfig, ip);
-      if (Platform.isAndroid) {
+      if (kDebugMode) {
         debugPrint('[CdnScan] Xray started for IP=$ip, port=${instance.port}, pid=${instance.process.pid}');
         debugPrint('[CdnScan] Waiting ${config.startupDelay.inMilliseconds}ms for xray startup...');
       }
@@ -587,10 +583,10 @@ class CdnConfigScanner {
           exitCodeFuture.then((code) => 'exited:$code'),
           Future.delayed(const Duration(milliseconds: 100), () => 'alive'),
         ]);
-        debugPrint('[CdnScan] Xray process status before test: $aliveCheck');
+        if (kDebugMode) debugPrint('[CdnScan] Xray process status before test: $aliveCheck');
         if (aliveCheck.startsWith('exited:')) {
           final code = aliveCheck.split(':')[1];
-          debugPrint('[CdnScan] ERROR: xray died before proxy test! exit=$code, errors: ${instance.errorLog}');
+          if (kDebugMode) debugPrint('[CdnScan] ERROR: xray died before proxy test! exit=$code, errors: ${instance.errorLog}');
           return CdnScanResult(
             ip: ip,
             success: false,
@@ -600,20 +596,20 @@ class CdnConfigScanner {
       }
 
       final result = await _testWithSocks5Proxy(ip, instance.port);
-      if (Platform.isAndroid) {
+      if (kDebugMode) {
         debugPrint('[CdnScan] Test result for IP=$ip: success=${result.success}, '
             'latency=${result.latencyMs}ms, error=${result.errorMessage}');
       }
       return result;
     } on XrayStartupException catch (e) {
-      debugPrint('[CdnScan] XrayStartupException for IP=$ip: ${e.message}');
+      if (kDebugMode) debugPrint('[CdnScan] XrayStartupException for IP=$ip: ${e.message}');
       return CdnScanResult(
         ip: ip,
         success: false,
         errorMessage: 'Xray start failed: ${e.message}',
       );
     } catch (e) {
-      debugPrint('[CdnScan] Exception for IP=$ip: $e');
+      if (kDebugMode) debugPrint('[CdnScan] Exception for IP=$ip: $e');
       return CdnScanResult(
         ip: ip,
         success: false,
