@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/app_config.dart';
 
@@ -15,6 +16,13 @@ class AboutScreen extends StatefulWidget {
 
 class _AboutScreenState extends State<AboutScreen> {
   bool _copied = false;
+
+  Future<void> _launchUrl() async {
+    final uri = Uri.parse(_githubUrl);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
 
   Future<void> _copyUrl() async {
     await Clipboard.setData(const ClipboardData(text: _githubUrl));
@@ -95,55 +103,129 @@ class _AboutScreenState extends State<AboutScreen> {
 
             const SizedBox(height: 32),
 
-            // URL with copy button
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: colorScheme.outlineVariant,
-                  width: 1,
-                ),
-              ),
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                  Icon(
-                    Icons.code,
-                    size: 20,
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 12),
-                  SelectableText(
-                    _githubUrl,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontFamily: 'monospace',
-                      color: colorScheme.onSurface,
+            // URL with launch and copy buttons
+            Builder(
+              builder: (context) {
+                final isNarrow = MediaQuery.sizeOf(context).width < 500;
+                final urlFontSize = isNarrow ? 12.0 : 14.0;
+                final padding = isNarrow ? 12.0 : 20.0;
+                return Container(
+                  padding: EdgeInsets.symmetric(horizontal: padding, vertical: isNarrow ? 12 : 16),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: colorScheme.outlineVariant,
+                      width: 1,
                     ),
                   ),
-                  const SizedBox(width: 16),
-                  FilledButton.tonalIcon(
-                    onPressed: _copied ? null : _copyUrl,
-                    icon: Icon(
-                      _copied ? Icons.check : Icons.copy,
-                      size: 18,
-                    ),
-                    label: Text(_copied ? 'Copied!' : 'Copy'),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                    ),
-                  ),
-                ],
-                ),
-              ),
+                  child: isNarrow
+                      ? Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.code, size: 16, color: colorScheme.onSurfaceVariant),
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: GestureDetector(
+                                    onTap: _launchUrl,
+                                    child: SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      child: SelectableText(
+                                        _githubUrl,
+                                        style: TextStyle(
+                                          fontSize: urlFontSize,
+                                          fontFamily: 'monospace',
+                                          color: colorScheme.primary,
+                                          decoration: TextDecoration.underline,
+                                          decorationColor: colorScheme.primary,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                FilledButton.tonalIcon(
+                                  onPressed: _launchUrl,
+                                  icon: const Icon(Icons.open_in_new, size: 16),
+                                  label: const Text('Open'),
+                                  style: FilledButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                FilledButton.tonalIcon(
+                                  onPressed: _copied ? null : _copyUrl,
+                                  icon: Icon(
+                                    _copied ? Icons.check : Icons.copy,
+                                    size: 16,
+                                  ),
+                                  label: Text(_copied ? 'Copied!' : 'Copy'),
+                                  style: FilledButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        )
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.code, size: 20, color: colorScheme.onSurfaceVariant),
+                            const SizedBox(width: 12),
+                            Flexible(
+                              child: GestureDetector(
+                                onTap: _launchUrl,
+                                child: SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  child: SelectableText(
+                                    _githubUrl,
+                                    style: TextStyle(
+                                      fontSize: urlFontSize,
+                                      fontFamily: 'monospace',
+                                      color: colorScheme.primary,
+                                      decoration: TextDecoration.underline,
+                                      decorationColor: colorScheme.primary,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            FilledButton.tonalIcon(
+                              onPressed: _launchUrl,
+                              icon: const Icon(Icons.open_in_new, size: 18),
+                              label: const Text('Open'),
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            FilledButton.tonalIcon(
+                              onPressed: _copied ? null : _copyUrl,
+                              icon: Icon(
+                                _copied ? Icons.check : Icons.copy,
+                                size: 18,
+                              ),
+                              label: Text(_copied ? 'Copied!' : 'Copy'),
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              ),
+                            ),
+                          ],
+                        ),
+                );
+              },
             )
                 .animate()
                 .fadeIn(duration: 400.ms, delay: 200.ms)

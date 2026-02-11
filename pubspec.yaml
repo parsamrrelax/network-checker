@@ -31,6 +31,9 @@ dependencies:
   dynamic_color: ^1.7.0
   window_manager: ^0.5.1
 
+  # Open URLs in browser
+  url_launcher: ^6.3.0
+
   # CDN Config Scan feature
   file_picker: ^8.0.0+1      # For config.json file selection
   archive: ^3.6.1            # For extracting zip files

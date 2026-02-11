@@ -22,14 +22,16 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
 
   // CDN Scan is available on desktop (Linux/Windows) and Android
   static final bool _showCdnScan = Platform.isLinux || Platform.isWindows || Platform.isAndroid;
   // SMS Encoder is only available on Android
   static final bool _showSmsEncoder = Platform.isAndroid;
-  // About page is only available on desktop
-  static final bool _showAbout = Platform.isLinux || Platform.isWindows || Platform.isMacOS;
+  // About page: desktop and Android (via drawer)
+  static final bool _showAbout = Platform.isLinux || Platform.isWindows || Platform.isMacOS || Platform.isAndroid;
 
+  // Mobile & Desktop: same screen list (drawer on mobile, rail on desktop)
   List<Widget> get _screens => [
     const DomainCheckerScreen(),
     const DnsScannerScreen(),
@@ -38,52 +40,10 @@ class _HomeScreenState extends State<HomeScreen> {
     const VlessConfigModifierScreen(),
     if (_showSmsEncoder) const SmsEncoderScreen(),
     if (_showCdnScan) const CdnConfigScanScreen(),
-  ];
-
-  List<Widget> get _desktopScreens => [
-    ..._screens,
     if (_showAbout) const AboutScreen(),
   ];
 
-  List<NavigationDestination> get _destinations => [
-    const NavigationDestination(
-      icon: Icon(Icons.language_outlined),
-      selectedIcon: Icon(Icons.language),
-      label: 'Domains',
-    ),
-    const NavigationDestination(
-      icon: Icon(Icons.dns_outlined),
-      selectedIcon: Icon(Icons.dns),
-      label: 'DNS',
-    ),
-    const NavigationDestination(
-      icon: Icon(Icons.radar_outlined),
-      selectedIcon: Icon(Icons.radar),
-      label: 'Hunter',
-    ),
-    const NavigationDestination(
-      icon: Icon(Icons.router_outlined),
-      selectedIcon: Icon(Icons.router),
-      label: 'Edge',
-    ),
-    const NavigationDestination(
-      icon: Icon(Icons.vpn_key_outlined),
-      selectedIcon: Icon(Icons.vpn_key),
-      label: 'VLESS',
-    ),
-    if (_showSmsEncoder)
-      const NavigationDestination(
-        icon: Icon(Icons.sms_outlined),
-        selectedIcon: Icon(Icons.sms),
-        label: 'SMS',
-      ),
-    if (_showCdnScan)
-      const NavigationDestination(
-        icon: Icon(Icons.speed_outlined),
-        selectedIcon: Icon(Icons.speed),
-        label: 'CDN Scan',
-      ),
-  ];
+  List<Widget> get _desktopScreens => _screens;
 
   List<NavigationRailDestination> get _railDestinations => [
     const NavigationRailDestination(
@@ -149,35 +109,97 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildMobileLayout() {
     return Scaffold(
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 300),
-        transitionBuilder: (child, animation) {
-          return FadeTransition(
-            opacity: animation,
-            child: SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0.05, 0),
-                end: Offset.zero,
-              ).animate(CurvedAnimation(
-                parent: animation,
-                curve: Curves.easeOutCubic,
-              )),
-              child: child,
+      key: _scaffoldKey,
+      drawer: _buildDrawer(),
+      body: Stack(
+        children: [
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            transitionBuilder: (child, animation) {
+              return FadeTransition(
+                opacity: animation,
+                child: SlideTransition(
+                  position: Tween<Offset>(
+                    begin: const Offset(0.05, 0),
+                    end: Offset.zero,
+                  ).animate(CurvedAnimation(
+                    parent: animation,
+                    curve: Curves.easeOutCubic,
+                  )),
+                  child: child,
+                ),
+              );
+            },
+            child: KeyedSubtree(
+              key: ValueKey(_selectedIndex),
+              child: _screens[_selectedIndex],
             ),
-          );
-        },
-        child: KeyedSubtree(
-          key: ValueKey(_selectedIndex),
-          child: _screens[_selectedIndex],
-        ),
+          ),
+          Positioned(
+            top: MediaQuery.paddingOf(context).top + 4,
+            left: 8,
+            child: Material(
+              color: Theme.of(context).colorScheme.surfaceContainerHigh.withValues(alpha: 0.9),
+              borderRadius: BorderRadius.circular(20),
+              child: IconButton(
+                icon: const Icon(Icons.menu),
+                onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+                tooltip: 'Open menu',
+              ),
+            ),
+          ),
+        ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) {
-          setState(() => _selectedIndex = index);
-        },
-        destinations: _destinations,
-      ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.2, end: 0),
+    );
+  }
+
+  Widget _buildDrawer() {
+    final colorScheme = Theme.of(context).colorScheme;
+    var index = 0;
+    final items = <_DrawerItem>[
+      _DrawerItem(icon: Icons.language, label: 'Domains', index: index++),
+      _DrawerItem(icon: Icons.dns, label: 'DNS', index: index++),
+      _DrawerItem(icon: Icons.radar, label: 'Hunter', index: index++),
+      _DrawerItem(icon: Icons.router, label: 'Edge', index: index++),
+      _DrawerItem(icon: Icons.vpn_key, label: 'VLESS', index: index++),
+      if (_showSmsEncoder) _DrawerItem(icon: Icons.sms, label: 'SMS', index: index++),
+      if (_showCdnScan) _DrawerItem(icon: Icons.speed, label: 'CDN Scan', index: index++),
+      if (_showAbout) _DrawerItem(icon: Icons.info, label: 'About', index: index++),
+    ];
+
+    return Drawer(
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          DrawerHeader(
+            decoration: BoxDecoration(color: colorScheme.primaryContainer),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Icon(Icons.network_check, size: 48, color: colorScheme.onPrimaryContainer),
+                const SizedBox(height: 8),
+                Text(
+                  'NetCheck',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: colorScheme.onPrimaryContainer,
+                      ),
+                ),
+              ],
+            ),
+          ),
+          ...items.map((item) => ListTile(
+                leading: Icon(item.icon, color: _selectedIndex == item.index ? colorScheme.primary : null),
+                title: Text(item.label),
+                selected: _selectedIndex == item.index,
+                onTap: () {
+                  setState(() => _selectedIndex = item.index);
+                  Navigator.pop(context);
+                },
+              )),
+        ],
+      ),
     );
   }
 
@@ -255,4 +277,12 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+}
+
+class _DrawerItem {
+  final IconData icon;
+  final String label;
+  final int index;
+
+  _DrawerItem({required this.icon, required this.label, required this.index});
 }
