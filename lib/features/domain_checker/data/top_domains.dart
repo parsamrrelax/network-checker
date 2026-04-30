@@ -346,8 +346,5 @@ const List<String> topDomains = [
   'littleburgundyshoes.com',
   'sportinglife.ca',
   'sportcheck.ca',
-  'mec.ca',
   'atmosphere.ca',
-  'sportinglife.ca',
-  'sportcheck.ca',
 ];
