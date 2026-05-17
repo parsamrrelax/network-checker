@@ -58,7 +58,7 @@ class NetlifyGeneratorController extends ChangeNotifier {
   String _uuid = '';
   String _path = '';
   String _netlifyDomain = '';
-  String _xhttpObject = '{"xPaddingBytes":"1-1"}';
+  String _xhttpObject = '';
   String _sniInput = '';
   String _ipInput = '';
   
