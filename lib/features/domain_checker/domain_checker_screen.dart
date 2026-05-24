@@ -217,20 +217,24 @@ class DomainCheckerScreen extends StatelessWidget {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Add Domain'),
-          content: TextField(
-            controller: textController,
-            autofocus: true,
-            decoration: const InputDecoration(
-              hintText: 'example.com',
-              prefixIcon: Icon(Icons.language),
+          title: const Text('Add Domains'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: TextField(
+              controller: textController,
+              autofocus: true,
+              maxLines: 8,
+              minLines: 4,
+              textInputAction: TextInputAction.newline,
+              decoration: const InputDecoration(
+                hintText: 'Enter domains, one per line:\nexample.com\ngoogle.com\ncloudflare.com',
+                prefixIcon: Padding(
+                  padding: EdgeInsets.only(bottom: 60),
+                  child: Icon(Icons.language),
+                ),
+                alignLabelWithHint: true,
+              ),
             ),
-            onSubmitted: (value) {
-              if (value.isNotEmpty) {
-                controller.addDomain(value);
-                Navigator.of(context).pop();
-              }
-            },
           ),
           actions: [
             TextButton(
@@ -239,8 +243,15 @@ class DomainCheckerScreen extends StatelessWidget {
             ),
             FilledButton(
               onPressed: () {
-                if (textController.text.isNotEmpty) {
-                  controller.addDomain(textController.text);
+                final lines = textController.text
+                    .split('\n')
+                    .map((line) => line.trim())
+                    .where((line) => line.isNotEmpty)
+                    .toList();
+                if (lines.isNotEmpty) {
+                  for (final domain in lines) {
+                    controller.addDomain(domain);
+                  }
                   Navigator.of(context).pop();
                 }
               },
