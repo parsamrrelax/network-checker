@@ -63,6 +63,9 @@ Generate multiple netlify configurations from multiple SNIs and IPs. Inspired by
 ### Akamai Scanner
 Scan akamai ip ranges
 
+### SNI Spoof Check
+Check if sni spoofing is open. Inspired by [sni scanner](https://github.com/seramo/sni-scanner)
+
 ## Android Only Features
 
 ### Config Encoder for SMS
