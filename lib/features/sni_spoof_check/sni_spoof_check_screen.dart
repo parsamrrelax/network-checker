@@ -88,16 +88,17 @@ class _SniSpoofCheckScreenState extends State<SniSpoofCheckScreen> {
       ),
       floatingActionButton: Consumer<SniSpoofCheckController>(
         builder: (context, controller, _) {
-          return Column(
+          return Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (controller.results.isNotEmpty && !controller.isScanning)
+              if (controller.results.isNotEmpty && !controller.isScanning) ...[
                 FloatingActionButton.small(
                   heroTag: 'sni_toggle_view',
                   onPressed: () => _showInputDialog(context, controller),
                   child: const Icon(Icons.edit),
                 ).animate().fadeIn(delay: 200.ms).scale(delay: 200.ms),
-              if (controller.results.isNotEmpty) const SizedBox(height: 12),
+                const SizedBox(width: 12),
+              ],
               FloatingActionButton.extended(
                 heroTag: 'sni_scan_action',
                 onPressed: controller.isScanning
