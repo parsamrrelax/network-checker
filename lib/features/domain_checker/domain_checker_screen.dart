@@ -1,6 +1,7 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 
@@ -20,14 +21,36 @@ class DomainCheckerScreen extends StatelessWidget {
         actions: [
           Consumer<DomainCheckerController>(
             builder: (context, controller, _) {
-              if (controller.checkedCount > 0 && !controller.isChecking) {
-                return IconButton(
-                  icon: const Icon(Icons.refresh),
-                  tooltip: 'Reset results',
-                  onPressed: controller.resetResults,
-                );
-              }
-              return const SizedBox.shrink();
+              final goodDomains = controller.domains
+                  .where((d) => d.status == CheckStatus.success)
+                  .map((d) => d.domain)
+                  .toList();
+
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (goodDomains.isNotEmpty)
+                    IconButton(
+                      icon: const Icon(Icons.copy_all),
+                      tooltip: 'Copy good domains',
+                      onPressed: () {
+                        Clipboard.setData(ClipboardData(text: goodDomains.join('\n')));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('${goodDomains.length} domains copied to clipboard'),
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      },
+                    ),
+                  if (controller.checkedCount > 0 && !controller.isChecking)
+                    IconButton(
+                      icon: const Icon(Icons.refresh),
+                      tooltip: 'Reset results',
+                      onPressed: controller.resetResults,
+                    ),
+                ],
+              );
             },
           ),
         ],
