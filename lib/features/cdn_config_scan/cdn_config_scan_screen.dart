@@ -707,7 +707,7 @@ class _IpInputStepState extends State<_IpInputStep> {
 
   void _onIpInputChanged(String text, CdnConfigScanController controller) {
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 1000), () {
+    _debounceTimer = Timer(const Duration(milliseconds: 3000), () {
       controller.updateIpInput(text);
     });
   }
