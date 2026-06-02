@@ -197,8 +197,9 @@ class InternetDiagnosticsController extends ChangeNotifier {
   static const List<String> protocolHttp3Domains = [
     'google.com',
     'cloudflare.com',
-    'speedtest.net',
     'dash.cloudflare.com',
+    'one.one.one.one',
+    'facebook.com',
   ];
 
 

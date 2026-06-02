@@ -344,8 +344,9 @@ class ProtocolAccessibilityService {
 
         return ProtocolTestResult(
           domain: domain,
-          success: true,
+          success: hasHttp3,
           latencyMs: stopwatch.elapsedMilliseconds,
+          errorMessage: hasHttp3 ? null : 'Negotiated HTTP version: ${response.httpVersion} (Expected HTTP/3)',
           details: details,
         );
       } catch (e) {
@@ -384,7 +385,7 @@ class ProtocolAccessibilityService {
 
         final stdout = result.stdout.toString().trim();
         final stderr = result.stderr.toString().trim();
-        final success = result.exitCode == 0 && (stdout.contains('HTTP/3') || stdout.contains('HTTP/2') || stdout.contains('200'));
+        final success = result.exitCode == 0 && stdout.contains('HTTP/3');
 
         if (success) {
           final lines = stdout.split('\n');
@@ -401,7 +402,9 @@ class ProtocolAccessibilityService {
             domain: domain,
             success: false,
             latencyMs: stopwatch.elapsedMilliseconds,
-            errorMessage: 'HTTP/3 handshake failed',
+            errorMessage: stdout.contains('HTTP/2')
+                ? 'Negotiated HTTP/2 instead of HTTP/3'
+                : 'HTTP/3 handshake failed',
             details: errorMsg,
           );
         }
