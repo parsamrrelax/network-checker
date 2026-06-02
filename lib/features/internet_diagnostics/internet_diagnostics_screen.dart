@@ -440,7 +440,7 @@ class InternetDiagnosticsScreen extends StatelessWidget {
                       _DiagnosticCheckCard(
                         title: 'Protocol Accessibility Scan',
                         description:
-                            'Checks ports and standard protocol capabilities (TCP/UDP/QUIC/WS/DoH/DoT/Ping)',
+                            'Checks ports and standard protocol capabilities (TCP/UDP/QUIC/DoH/DoT/Ping)',
                         iconData: Icons.network_locked_rounded,
                         isPending:
                             controller.isIdle ||
@@ -457,7 +457,7 @@ class InternetDiagnosticsScreen extends StatelessWidget {
                                 name: 'Protocol Accessibility Scan',
                                 success: controller.protocolAccessibilitySuccess,
                                 message:
-                                    '${controller.supportedProtocolsCount} of 8 protocols supported, ${controller.blockedProtocolsCount} blocked',
+                                    '${controller.supportedProtocolsCount} of 7 protocols supported, ${controller.blockedProtocolsCount} blocked',
                                 details:
                                     'Protocol Scan results:\nSupported: ${controller.supportedProtocolsCount}\nBlocked: ${controller.blockedProtocolsCount}\nDetails of protocol support and individual domains are visible in the Protocol Accessibility section above.',
                               )
@@ -2361,7 +2361,7 @@ class InternetDiagnosticsScreen extends StatelessWidget {
 
     final isScanning = controller.isScanningProtocols;
     final summaries = controller.protocolAccessibilitySummaries;
-    final totalCount = 8;
+    final totalCount = 7;
     final scannedCount = summaries.length;
 
     return Padding(
@@ -2802,9 +2802,6 @@ class _ProtocolSummaryGridCard extends StatelessWidget {
         break;
       case 'HTTP/3 (QUIC)':
         leadingIcon = Icons.bolt_rounded;
-        break;
-      case 'WebSockets':
-        leadingIcon = Icons.swap_calls_rounded;
         break;
       case 'DNS-over-HTTPS':
         leadingIcon = Icons.security_rounded;

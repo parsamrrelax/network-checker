@@ -201,11 +201,6 @@ class InternetDiagnosticsController extends ChangeNotifier {
     'dash.cloudflare.com',
   ];
 
-  static const List<String> protocolWebsocketUrls = [
-    'wss://ws.postman-echo.com/raw',
-    'wss://javascript.info/article/websocket/demo/hello',
-    'wss://echo.websocket.events',
-  ];
 
   static const List<String> protocolDohDomains = [
     'dns.google',
@@ -691,13 +686,6 @@ class InternetDiagnosticsController extends ChangeNotifier {
       ));
       if (runId != _currentRunId) return;
 
-      summaries.add(await runProtocolStep(
-        'WebSockets',
-        'WebSocket handshake and duplex connection',
-        protocolWebsocketUrls,
-        ProtocolAccessibilityService.testWebSocketDomain,
-      ));
-      if (runId != _currentRunId) return;
 
       summaries.add(await runProtocolStep(
         'DNS-over-HTTPS',

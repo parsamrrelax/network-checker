@@ -417,34 +417,6 @@ class ProtocolAccessibilityService {
     }
   }
 
-  // ── 5. WebSocket Test ──────────────────────────────────────────────────────
-  static Future<ProtocolTestResult> testWebSocketDomain(String url, Duration timeout) async {
-    final stopwatch = Stopwatch()..start();
-    WebSocket? socket;
-    try {
-      socket = await WebSocket.connect(url)
-          .timeout(timeout);
-      stopwatch.stop();
-      
-      final subProtocol = socket.protocol ?? 'None';
-      await socket.close();
-
-      return ProtocolTestResult(
-        domain: url,
-        success: true,
-        latencyMs: stopwatch.elapsedMilliseconds,
-        details: 'Handshake completed.\nSub-protocol: $subProtocol',
-      );
-    } catch (e) {
-      stopwatch.stop();
-      return ProtocolTestResult(
-        domain: url,
-        success: false,
-        latencyMs: stopwatch.elapsedMilliseconds,
-        errorMessage: _formatError(e),
-      );
-    }
-  }
 
   // ── 6. DNS-over-HTTPS (DoH) Test ───────────────────────────────────────────
   static Future<ProtocolTestResult> testDoHDomain(String domain, Duration timeout) async {
