@@ -37,6 +37,9 @@
 
 ## ویژگی‌ها
 
+### تست کامل شبکه
+تحلیل کامل پروتکل‌ها، شبکه‌های اجتماعی، وبسایت‌های معروف، دی‌ان‌اس‌های معروف و موارد دیگر آماده شده برای تحلیل با هوش مصنوعی.
+
 ### بررسی‌کننده دامنه
 اسکن پربازدیدترین دامنه‌ها برای بررسی در دسترس بودن آن‌ها. با قابلیت اضافه کردن دامنه‌های دلخواه.
 
@@ -103,6 +106,9 @@ Available for Android, Windows and Linux.
 
 
 ## Features
+
+### Internet Diagnostics
+A set of automated tests for different network protocols, DNS providers, websites accessibility and more. Ready to be analyzed with AI.
 
 ### Domain Checker
 Scan most visited domains to check which ones are accessible. With the ability to add custom ones!
