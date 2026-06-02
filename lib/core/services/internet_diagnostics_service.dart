@@ -30,6 +30,62 @@ class DiagnosticTestResult {
   };
 }
 
+/// Detailed result of a packet loss test for a single destination
+class PacketLossDestinationResult {
+  final String destination;
+  final List<int?> latencies; // null for lost packets
+  final int totalSent;
+  final int totalReceived;
+  final double lossPercentage;
+  final int maxConsecutiveLoss;
+  final int? minLatency;
+  final int? maxLatency;
+  final int? avgLatency;
+  final String? errorMessage;
+
+  PacketLossDestinationResult({
+    required this.destination,
+    required this.latencies,
+    required this.totalSent,
+    required this.totalReceived,
+    required this.lossPercentage,
+    required this.maxConsecutiveLoss,
+    this.minLatency,
+    this.maxLatency,
+    this.avgLatency,
+    this.errorMessage,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'destination': destination,
+    'latencies': latencies,
+    'totalSent': totalSent,
+    'totalReceived': totalReceived,
+    'lossPercentage': lossPercentage,
+    'maxConsecutiveLoss': maxConsecutiveLoss,
+    'minLatency': minLatency,
+    'maxLatency': maxLatency,
+    'avgLatency': avgLatency,
+    'errorMessage': errorMessage,
+  };
+}
+
+/// Consolidated summary of packet loss tests across all destinations
+class PacketLossSummary {
+  final List<PacketLossDestinationResult> results;
+  final bool success;
+
+  PacketLossSummary({
+    required this.results,
+    required this.success,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'results': results.map((r) => r.toMap()).toList(),
+    'success': success,
+  };
+}
+
 /// Service that executes core network connectivity tests on Android, Linux, and Windows.
 class InternetDiagnosticsService {
   static const Duration timeoutLimit = Duration(seconds: 3);

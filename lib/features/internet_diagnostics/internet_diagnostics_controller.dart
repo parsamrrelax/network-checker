@@ -8,6 +8,27 @@ import '../../core/services/protocol_accessibility_service.dart';
 /// Current state status of the diagnostic engine
 enum DiagnosticEngineStatus { idle, running, completed }
 
+/// Progress tracking container for packet loss analysis on a single target
+class PacketLossDestinationProgress {
+  final String destination;
+  final List<bool?> pings; // true = success, false = fail, null = pending
+  final List<int?> latencies; // null for lost packets
+  int totalSent = 0;
+  int totalReceived = 0;
+  double lossPercentage = 0.0;
+  int maxConsecutiveLoss = 0;
+  int? minLatency;
+  int? maxLatency;
+  int? avgLatency;
+  String? statusMessage;
+
+  PacketLossDestinationProgress({
+    required this.destination,
+    required int pingCount,
+  }) : pings = List<bool?>.filled(pingCount, null),
+       latencies = List<int?>.filled(pingCount, null);
+}
+
 /// Controller that coordinates executing tests and updating diagnostic UI states.
 class InternetDiagnosticsController extends ChangeNotifier {
   DiagnosticEngineStatus _engineStatus = DiagnosticEngineStatus.idle;
@@ -55,6 +76,13 @@ class InternetDiagnosticsController extends ChangeNotifier {
   List<ProtocolAccessibilitySummary> _protocolAccessibilitySummaries = [];
   bool _isScanningProtocols = false;
   String _protocolStepName = '';
+
+  // Packet Loss Analysis State
+  final List<String> _packetLossDestinations = ['1.1.1.1', '8.8.8.8', 'google.com'];
+  bool _isTestingPacketLoss = false;
+  List<PacketLossDestinationProgress> _packetLossProgress = [];
+  PacketLossSummary? _packetLossSummary;
+  bool _packetLossSuccess = false;
 
   // List of major targets to verify
   static const List<Map<String, String>> targetWebsites = [
@@ -142,7 +170,7 @@ class InternetDiagnosticsController extends ChangeNotifier {
 
   // Track progress
   int _completedTestsCount = 0;
-  static const int totalTestsCount = 12; // 12 progressive sequence tasks
+  static const int totalTestsCount = 13; // 13 progressive sequence tasks
 
   // Targets for Protocol Accessibility Checks
   static const List<String> protocolHttpDomains = [
@@ -205,6 +233,13 @@ class InternetDiagnosticsController extends ChangeNotifier {
   String get protocolStepName => _protocolStepName;
   int get supportedProtocolsCount => _protocolAccessibilitySummaries.where((s) => s.isSupported).length;
   int get blockedProtocolsCount => _protocolAccessibilitySummaries.where((s) => s.isBlocked).length;
+
+  // Packet Loss Getters
+  List<String> get packetLossDestinations => _packetLossDestinations;
+  bool get isTestingPacketLoss => _isTestingPacketLoss;
+  List<PacketLossDestinationProgress> get packetLossProgress => _packetLossProgress;
+  PacketLossSummary? get packetLossSummary => _packetLossSummary;
+  bool get packetLossSuccess => _packetLossSuccess;
 
   // Getters
   DiagnosticEngineStatus get engineStatus => _engineStatus;
@@ -379,6 +414,10 @@ class InternetDiagnosticsController extends ChangeNotifier {
     _isScanningCdns = false;
     _socialMediaResults = [];
     _isScanningSocialMedia = false;
+    _isTestingPacketLoss = false;
+    _packetLossProgress = [];
+    _packetLossSummary = null;
+    _packetLossSuccess = false;
 
     notifyListeners();
 
@@ -723,9 +762,153 @@ class InternetDiagnosticsController extends ChangeNotifier {
 
     _protocolAccessibilitySuccess = hasProtocolSupport;
     _isScanningProtocols = false;
+    notifyListeners();
+
+    // 13. Packet Loss Analysis Step
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (runId != _currentRunId) return;
+    _completedTestsCount++;
+    notifyListeners();
+
+    await runPacketLossAnalysis(pingCount: 10);
+    if (runId != _currentRunId) return;
 
     _engineStatus = DiagnosticEngineStatus.completed;
     notifyListeners();
+  }
+
+  void addPacketLossDestination(String destination) {
+    if (destination.trim().isEmpty) return;
+    final host = destination.trim();
+    if (!_packetLossDestinations.contains(host)) {
+      _packetLossDestinations.add(host);
+      notifyListeners();
+    }
+  }
+
+  void removePacketLossDestination(String destination) {
+    if (_packetLossDestinations.length <= 1) return;
+    _packetLossDestinations.remove(destination);
+    notifyListeners();
+  }
+
+  /// Runs packet loss test to multiple destinations in a staggered parallel manner.
+  Future<void> runPacketLossAnalysis({int pingCount = 10}) async {
+    _isTestingPacketLoss = true;
+    _packetLossSummary = null;
+    _packetLossSuccess = false;
+    _packetLossProgress = _packetLossDestinations
+        .map((t) => PacketLossDestinationProgress(destination: t, pingCount: pingCount))
+        .toList();
+    notifyListeners();
+
+    final List<Future<void>> futures = [];
+    for (int i = 0; i < _packetLossDestinations.length; i++) {
+      futures.add(_runPacketLossForTarget(i, pingCount));
+    }
+    await Future.wait(futures);
+
+    // Compute final summary
+    final destinationResults = _packetLossProgress.map((p) {
+      return PacketLossDestinationResult(
+        destination: p.destination,
+        latencies: p.latencies,
+        totalSent: p.totalSent,
+        totalReceived: p.totalReceived,
+        lossPercentage: p.lossPercentage,
+        maxConsecutiveLoss: p.maxConsecutiveLoss,
+        minLatency: p.minLatency,
+        maxLatency: p.maxLatency,
+        avgLatency: p.avgLatency,
+        errorMessage: p.totalReceived == 0 && p.totalSent > 0
+            ? 'All pings failed or command timed out'
+            : null,
+      );
+    }).toList();
+
+    _packetLossSuccess = destinationResults.any((r) => r.totalReceived > 0);
+    _packetLossSummary = PacketLossSummary(
+      results: destinationResults,
+      success: _packetLossSuccess,
+    );
+
+    _isTestingPacketLoss = false;
+    notifyListeners();
+  }
+
+  Future<void> _runPacketLossForTarget(int targetIndex, int pingCount) async {
+    final progress = _packetLossProgress[targetIndex];
+    final destination = progress.destination;
+
+    // Stagger start time of each target to prevent CPU/IO spikes
+    await Future.delayed(Duration(milliseconds: targetIndex * 150));
+
+    for (int step = 0; step < pingCount; step++) {
+      // 200ms delay between successive pings to the same target
+      if (step > 0) {
+        await Future.delayed(const Duration(milliseconds: 200));
+      }
+
+      progress.totalSent++;
+      progress.statusMessage = 'Pinging...';
+      notifyListeners();
+
+      try {
+        final res = await ProtocolAccessibilityService.testIcmpDomain(
+          destination,
+          const Duration(seconds: 1),
+        );
+
+        progress.pings[step] = res.success;
+        progress.latencies[step] = res.success ? res.latencyMs : null;
+
+        if (res.success) {
+          progress.totalReceived++;
+        }
+      } catch (e) {
+        progress.pings[step] = false;
+        progress.latencies[step] = null;
+      }
+
+      _recomputePacketLossMetrics(progress);
+      notifyListeners();
+    }
+
+    progress.statusMessage = 'Completed';
+    notifyListeners();
+  }
+
+  void _recomputePacketLossMetrics(PacketLossDestinationProgress progress) {
+    final receivedCount = progress.pings.where((p) => p == true).length;
+    final sentCount = progress.pings.where((p) => p != null).length;
+    if (sentCount == 0) return;
+
+    progress.lossPercentage = ((sentCount - receivedCount) / sentCount) * 100;
+
+    int currentConsecutive = 0;
+    int maxConsecutive = 0;
+    for (final ping in progress.pings) {
+      if (ping == false) {
+        currentConsecutive++;
+        if (currentConsecutive > maxConsecutive) {
+          maxConsecutive = currentConsecutive;
+        }
+      } else if (ping == true) {
+        currentConsecutive = 0;
+      }
+    }
+    progress.maxConsecutiveLoss = maxConsecutive;
+
+    final activeLatencies = progress.latencies.whereType<int>().toList();
+    if (activeLatencies.isNotEmpty) {
+      progress.minLatency = activeLatencies.reduce(min);
+      progress.maxLatency = activeLatencies.reduce(max);
+      progress.avgLatency = (activeLatencies.reduce((a, b) => a + b) / activeLatencies.length).round();
+    } else {
+      progress.minLatency = null;
+      progress.maxLatency = null;
+      progress.avgLatency = null;
+    }
   }
 
   /// Reset the engine state
@@ -765,6 +948,11 @@ class InternetDiagnosticsController extends ChangeNotifier {
     _protocolAccessibilitySummaries = [];
     _isScanningProtocols = false;
     _protocolStepName = '';
+
+    _isTestingPacketLoss = false;
+    _packetLossProgress = [];
+    _packetLossSummary = null;
+    _packetLossSuccess = false;
 
     notifyListeners();
   }

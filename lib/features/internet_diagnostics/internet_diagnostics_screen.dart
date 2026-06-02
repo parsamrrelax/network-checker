@@ -89,6 +89,11 @@ class InternetDiagnosticsScreen extends StatelessWidget {
                 // 9. Protocol Accessibility Dashboard
                 _buildProtocolAccessibilityDashboard(context, controller),
 
+                const SizedBox(height: 16),
+
+                // 10. Packet Loss Analysis Dashboard
+                _buildPacketLossDashboard(context, controller),
+
                 const SizedBox(height: 24),
 
                 // 5. Staggered Check Details List
@@ -458,6 +463,44 @@ class InternetDiagnosticsScreen extends StatelessWidget {
                               )
                             : null,
                       ).animate().fadeIn(delay: 1100.ms).slideY(begin: 0.1, end: 0),
+
+                      const SizedBox(height: 12),
+
+                      // Packet Loss Analysis checklist card
+                      _DiagnosticCheckCard(
+                        title: 'Packet Loss Analysis',
+                        description:
+                            'Measures packet loss, consecutive drops, and average latency to multiple endpoints',
+                        iconData: Icons.water_drop_rounded,
+                        isPending:
+                            controller.isIdle ||
+                            (controller.isRunning &&
+                                controller.completedTestsCount < 13),
+                        isRunning: controller.isTestingPacketLoss,
+                        isSuccess: controller.isCompleted
+                            ? controller.packetLossSuccess
+                            : (controller.completedTestsCount >= 13
+                                  ? controller.packetLossSuccess
+                                  : false),
+                        result: controller.isCompleted && controller.packetLossSummary != null
+                            ? DiagnosticTestResult(
+                                name: 'Packet Loss Analysis',
+                                success: controller.packetLossSuccess,
+                                message: controller.packetLossSuccess
+                                    ? 'Packet loss test completed successfully'
+                                    : 'Packet loss test failed',
+                                details: controller.packetLossSummary!.results
+                                    .map((r) => 'Target: ${r.destination}\n'
+                                        '  Loss: ${r.lossPercentage.toStringAsFixed(1)}% '
+                                        '(${r.totalSent - r.totalReceived}/${r.totalSent} lost)\n'
+                                        '  Consecutive Loss: ${r.maxConsecutiveLoss}\n'
+                                        '  Latency: ${r.avgLatency != null ? "${r.avgLatency}ms" : "--"} avg '
+                                        '(min: ${r.minLatency != null ? "${r.minLatency}ms" : "--"}, max: ${r.maxLatency != null ? "${r.maxLatency}ms" : "--"})\n'
+                                        '${r.errorMessage != null ? "  Error: ${r.errorMessage}\n" : ""}')
+                                    .join('\n'),
+                              )
+                            : null,
+                      ).animate().fadeIn(delay: 1150.ms).slideY(begin: 0.1, end: 0),
                     ],
                   ),
                 ),
@@ -2342,6 +2385,253 @@ class InternetDiagnosticsScreen extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildPacketLossDashboard(
+    BuildContext context,
+    InternetDiagnosticsController controller,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    // Display only when the diagnostics suite is completed or idle
+    // or when the packet loss step itself starts.
+    if (controller.isIdle ||
+        (controller.isRunning && controller.completedTestsCount < 12)) {
+      return const SizedBox.shrink();
+    }
+
+    final isScanning = controller.isTestingPacketLoss;
+    final progressList = controller.packetLossProgress;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Card(
+        color: colorScheme.surfaceContainerHigh.withValues(alpha: 0.5),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.6),
+            width: 1,
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header Summary Row
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'PACKET LOSS ANALYSIS',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.5,
+                            color: colorScheme.onSurfaceVariant.withValues(
+                              alpha: 0.8,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          isScanning
+                              ? 'Running packet loss tests to multiple destinations...'
+                              : 'Real-time ping checks (ICMP)',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colorScheme.onSurfaceVariant.withValues(
+                              alpha: 0.6,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (isScanning)
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+
+              // Real-time progress layout
+              if (progressList.isNotEmpty) ...[
+                ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: progressList.length,
+                  separatorBuilder: (context, index) => const SizedBox(height: 16),
+                  itemBuilder: (context, index) {
+                    final progress = progressList[index];
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              progress.destination,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              progress.statusMessage ?? '',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(child: _buildPingGrid(progress, colorScheme)),
+                            const SizedBox(width: 16),
+                            // Metrics display
+                            _buildMetricBadge(
+                              context,
+                              label: 'Loss',
+                              value: '${progress.lossPercentage.toStringAsFixed(1)}%',
+                              color: progress.lossPercentage > 30
+                                  ? colorScheme.error
+                                  : (progress.lossPercentage > 0
+                                      ? colorScheme.warning
+                                      : colorScheme.success),
+                            ),
+                            const SizedBox(width: 8),
+                            _buildMetricBadge(
+                              context,
+                              label: 'Consecutive',
+                              value: '${progress.maxConsecutiveLoss}',
+                              color: progress.maxConsecutiveLoss > 3
+                                  ? colorScheme.error
+                                  : (progress.maxConsecutiveLoss > 0
+                                      ? colorScheme.warning
+                                      : colorScheme.success),
+                            ),
+                            const SizedBox(width: 8),
+                            _buildMetricBadge(
+                              context,
+                              label: 'Avg Latency',
+                              value: progress.avgLatency != null ? '${progress.avgLatency}ms' : '--',
+                              color: colorScheme.primary,
+                            ),
+                          ],
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ] else if (isScanning) ...[
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: Column(
+                      children: [
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Initializing packet loss tests...',
+                          style: TextStyle(color: colorScheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPingGrid(PacketLossDestinationProgress targetProgress, ColorScheme colorScheme) {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: List.generate(targetProgress.pings.length, (index) {
+        final status = targetProgress.pings[index];
+        Color boxColor = Colors.transparent;
+        Border border = Border.all(color: colorScheme.outlineVariant, width: 1.5);
+
+        if (status == true) {
+          boxColor = colorScheme.success.withValues(alpha: 0.85);
+          border = Border.all(color: colorScheme.success, width: 1.5);
+        } else if (status == false) {
+          boxColor = colorScheme.error.withValues(alpha: 0.85);
+          border = Border.all(color: colorScheme.error, width: 1.5);
+        } else if (index == targetProgress.totalSent - 1 && targetProgress.statusMessage == 'Pinging...') {
+          boxColor = colorScheme.primaryContainer;
+          border = Border.all(color: colorScheme.primary, width: 1.5);
+        }
+
+        return Container(
+          width: 14,
+          height: 14,
+          decoration: BoxDecoration(
+            color: boxColor,
+            borderRadius: BorderRadius.circular(4),
+            border: border,
+          ),
+        ).animate().scale(duration: 150.ms, curve: Curves.easeOut);
+      }),
+    );
+  }
+
+  Widget _buildMetricBadge(
+    BuildContext context, {
+    required String label,
+    required String value,
+    required Color color,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: color.withValues(alpha: 0.25),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            label.toUpperCase(),
+            style: TextStyle(
+              fontSize: 8,
+              fontWeight: FontWeight.bold,
+              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -5077,4 +5367,6 @@ class _CdnReachabilityCard extends StatelessWidget {
         return Icons.cloud_rounded;
     }
   }
+
 }
+
