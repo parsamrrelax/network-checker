@@ -11,30 +11,6 @@
 <a href="https://github.com/mirarr-app/network-checker/releases"><img src="https://raw.githubusercontent.com/NeoApplications/Neo-Backup/034b226cea5c1b30eb4f6a6f313e4dadcbb0ece4/badge_github.png" width="200"></a> 
 
 
-## تصاویر نسخه دسکتاپ
-
-|                     بررسی‌کننده دامنه                      |                     تست تأخیر DNS                      |
-| :--------------------------------------------------: | :------------------------------------------------------: |
-| ![بررسی‌کننده دامنه](https://github.com/user-attachments/assets/cb49a96d-d86f-4041-b273-18b0568080a9) | ![تست تأخیر DNS](https://github.com/user-attachments/assets/0eb2a4af-bc10-44c5-9c77-da38b3e2751f) |
-|                     شکارچی DNS                      |                     بررسی‌کننده Edge IP                      |
-| ![شکارچی DNS](https://github.com/user-attachments/assets/b3e88496-bbe8-4250-91a4-999fc2f2d7e9) | ![بررسی‌کننده Edge IP](https://github.com/user-attachments/assets/5250f5b7-13f9-47d5-a9c3-24eb29e5b87b) |
-|                     ویرایشگر کانفیگ Vless                      |                     اسکنر CDN Xray                      |
-| ![ویرایشگر کانفیگ Vless](https://github.com/user-attachments/assets/25c935e2-fe52-43b6-a245-a6daf1da83d5) | ![اسکنر CDN Xray](https://github.com/user-attachments/assets/ee58ee80-c7ec-4d43-8548-5080480b0aa6) |
-
-
-## تصاویر نسخه موبایل
-
-|                     بررسی‌کننده دامنه                      |                     تست تأخیر DNS                      |
-| :--------------------------------------------------: | :------------------------------------------------------: |
-| ![بررسی‌کننده دامنه](https://github.com/user-attachments/assets/e8c7edd0-cabe-49d7-b2d9-9d0ac5530606) | ![تست تأخیر DNS](https://github.com/user-attachments/assets/2c5f03d6-e3fb-4dbf-8523-9588dbbebf9c) |
-|                     شکارچی DNS                      |                     بررسی‌کننده Edge IP                      |
-| ![شکارچی DNS](https://github.com/user-attachments/assets/1f9c5284-d174-4faa-ab3f-dc2af53939be) | ![بررسی‌کننده Edge IP](https://github.com/user-attachments/assets/3f99b877-0403-40c2-b3ea-20fd710ca364) |
-|                     ویرایشگر کانفیگ Vless                      |                     رمزگذاری برای پیامک                      |
-| ![ویرایشگر کانفیگ Vless](https://github.com/user-attachments/assets/cafc79e5-6dd2-4451-ba0d-f0f2aaae4a12) | ![رمزگذاری برای پیامک](https://github.com/user-attachments/assets/0c1910ab-f7e0-441f-b2e5-906f685c788c) |
-
-
-
-
 ## ویژگی‌ها
 
 ### تست کامل شبکه
